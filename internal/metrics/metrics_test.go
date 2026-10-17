@@ -37,7 +37,38 @@ func TestWorseGrade(t *testing.T) {
 	if WorseGrade("A", "C") != "C" {
 		t.Fatal("expected C")
 	}
-	if WorseGrade("A+", "A") != "A" {
-		t.Fatal("expected A")
+	if WorseGrades("A+", "A", "B") != "B" {
+		t.Fatal("expected B")
+	}
+}
+
+func TestJitterAndLoss(t *testing.T) {
+	if LossPercent(1, 4) != 25 {
+		t.Fatal("loss")
+	}
+	j := JitterMs([]float64{10, 12, 11, 15})
+	// |2|+|1|+|4| / 3 = 7/3
+	if math.Abs(j-7.0/3.0) > 0.01 {
+		t.Fatalf("jitter=%v", j)
+	}
+}
+
+func TestRPM(t *testing.T) {
+	// 10 successes in 2s => 300 / min
+	if RPM(10, 2) != 300 {
+		t.Fatalf("rpm=%v", RPM(10, 2))
+	}
+}
+
+func TestRecovery(t *testing.T) {
+	samples := []float64{80, 60, 25, 12, 11}
+	got := RecoveryMsUntil(samples, 10, 5, 200) // threshold 15, first hit index 3
+	if got != 600 {
+		t.Fatalf("recovery=%v want 600", got)
+	}
+	times := []float64{0, 250, 500, 780, 1000}
+	stable := RecoveryMsStable(samples, times, 10, 5, 2) // need two ≤15: indices 3,4 → 1000
+	if stable != 1000 {
+		t.Fatalf("stable=%v want 1000", stable)
 	}
 }

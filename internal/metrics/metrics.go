@@ -73,10 +73,89 @@ func WorseGrade(a, b string) string {
 	return b
 }
 
+// WorseGrades returns the worst grade among many.
+func WorseGrades(grades ...string) string {
+	if len(grades) == 0 {
+		return "—"
+	}
+	worst := grades[0]
+	for _, g := range grades[1:] {
+		worst = WorseGrade(worst, g)
+	}
+	return worst
+}
+
 // Mbps converts bytes transferred over durationMs to megabits/sec.
 func Mbps(bytes int64, durationMs float64) float64 {
 	if durationMs <= 0 {
 		return math.NaN()
 	}
 	return float64(bytes) * 8 / (durationMs / 1000) / 1e6
+}
+
+// LossPercent is failedAttempts / totalAttempts * 100.
+func LossPercent(failed, total int) float64 {
+	if total <= 0 {
+		return math.NaN()
+	}
+	return float64(failed) / float64(total) * 100
+}
+
+// JitterMs is mean |ΔRTT| between consecutive successful probes (variability metric,
+// not VoIP RFC 3550 interarrival jitter).
+func JitterMs(samples []float64) float64 {
+	if len(samples) < 2 {
+		return math.NaN()
+	}
+	var sum float64
+	for i := 1; i < len(samples); i++ {
+		d := samples[i] - samples[i-1]
+		if d < 0 {
+			d = -d
+		}
+		sum += d
+	}
+	return sum / float64(len(samples)-1)
+}
+
+// RPM approximates successful probes per minute over durationSec.
+func RPM(successes int, durationSec float64) float64 {
+	if durationSec <= 0 {
+		return math.NaN()
+	}
+	return float64(successes) / durationSec * 60
+}
+
+// RecoveryMsUntil is kept for simple evenly-spaced estimates (tests / CLI fallback).
+func RecoveryMsUntil(samples []float64, baselineP50, slackMs, intervalMs float64) float64 {
+	times := make([]float64, len(samples))
+	for i := range samples {
+		times[i] = float64(i) * intervalMs
+	}
+	return RecoveryMsStable(samples, times, baselineP50, slackMs, 1)
+}
+
+// RecoveryMsStable returns elapsed ms (from sampleTimesMs) when `need` consecutive
+// samples are ≤ baselineP50+slackMs. sampleTimesMs[i] is time of samples[i] from
+// phase start. Returns NaN if never stably recovered.
+func RecoveryMsStable(samples, sampleTimesMs []float64, baselineP50, slackMs float64, need int) float64 {
+	if len(samples) == 0 || math.IsNaN(baselineP50) || len(samples) != len(sampleTimesMs) {
+		return math.NaN()
+	}
+	if need < 1 {
+		need = 1
+	}
+	threshold := baselineP50 + slackMs
+	streak := 0
+	for i, s := range samples {
+		if s <= threshold {
+			streak++
+			if streak >= need {
+				return sampleTimesMs[i]
+			}
+		} else {
+			streak = 0
+		}
+	}
+	return math.NaN()
 }

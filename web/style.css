@@ -168,8 +168,8 @@ body {
 .phase-rail {
   list-style: none;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.5rem;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.4rem;
   padding: 0;
   margin: 2rem 0 0.55rem;
 }
@@ -294,6 +294,22 @@ body {
   font-size: 0.8rem;
 }
 
+.live-extras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+  justify-content: center;
+  margin-top: 0.65rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.live-extras strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .chart-wrap {
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -328,6 +344,29 @@ body {
 .lg.baseline::before { background: var(--baseline); }
 .lg.down::before { background: var(--down); }
 .lg.up::before { background: var(--up); }
+.lg.bi::before { background: #c084fc; }
+.lg.rec::before { background: #8b9bb0; }
+
+.dir-icon.bi { background: rgba(192, 132, 252, 0.12); color: #c084fc; }
+
+.dir-grades {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+}
+
+.grade-hero .dir-grades {
+  grid-template-columns: 1fr 1fr;
+}
+
+@media (min-width: 761px) {
+  .grade-hero {
+    grid-template-columns: 0.9fr 1.6fr;
+  }
+  .grade-hero .dir-grades {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+}
 
 #latencyChart {
   width: 100%;
@@ -403,12 +442,6 @@ body {
 .medal-caption {
   color: var(--muted);
   font-size: 0.85rem;
-}
-
-.dir-grades {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.85rem;
 }
 
 .grade-card {
@@ -509,8 +542,10 @@ body {
 @media (max-width: 760px) {
   .gauge-row,
   .grade-hero,
-  .dir-grades,
-  .phase-rail {
+  .dir-grades {
     grid-template-columns: 1fr;
+  }
+  .phase-rail {
+    grid-template-columns: repeat(3, 1fr);
   }
 }

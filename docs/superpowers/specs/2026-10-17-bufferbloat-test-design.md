@@ -1,109 +1,114 @@
 # Self-hosted Bufferbloat Test — Design Spec
 
-**Date:** 2026-10-17  
-**Status:** Approved for implementation planning  
+**Date:** 2026-10-17
+**Status:** Implemented (MVP + extended methodology)
 **Location:** `custom-bufferbloat/`
 
 ## Summary
 
-Build a **self-hosted, LibreQoS-inspired bufferbloat test**: a single **Go** binary that serves a browser UI and HTTP endpoints for latency probes plus download/upload saturation. The same binary targets **VPS** and **OpenWrt**. No authentication in v1. A thin CLI that reuses the same endpoints is a non-blocking bonus.
+Self-hosted, LibreQoS-inspired **bufferbloat / responsiveness** test: one **Go** binary serves an embedded browser UI and HTTP endpoints for latency probes plus download/upload saturation. Same binary targets **VPS** and **OpenWrt**. No authentication in v1. CLI client talks to the same API.
 
 ## Goals
 
 - Measure **latency under load** (bufferbloat), not just idle speed.
-- Provide a **web UI** similar in spirit to [Waveform Bufferbloat](https://www.waveform.com/tools/bufferbloat) / [LibreQoS test](https://test.libreqos.com/): start button, live charts, percentiles, separate up/down grades.
-- Run on **OpenWrt routers** and **VPS** from one codebase.
-- Keep the server small: **HTTP-only** load and ping (no WebSockets in v1).
+- Web UI in the spirit of Waveform / LibreQoS / Cloudflare Speed: live gauges, phase rail, charts, grades A+–F.
+- Run on **OpenWrt** and **VPS** from one codebase.
+- HTTP-only load and ping (no WebSockets).
+- Extended diagnostics: warm-up, bidirectional load, probe loss, jitter, RPM (SLA), recovery.
 
 ## Non-goals (v1)
 
-- Authentication / TLS inside the binary (use reverse proxy or firewall if exposing WAN).
+- Authentication / TLS inside the binary (reverse proxy / firewall if WAN).
 - Quality of Outcome (QoO), Virtual Household, online rankings.
 - Persistent history / database.
-- Full browser E2E test suite.
+- Full browser E2E in CI.
 - C implementation.
+- Raw ICMP packet-loss measurement (we report **HTTP probe** loss only).
 
 ## Chosen approach
 
-**Approach A — single Go binary + HTTP-only** (inspired by [LibreQoE/Bufferbloat-Test](https://github.com/LibreQoE/Bufferbloat-Test)):
+**Approach A — single Go binary + HTTP-only.**
 
 | Rejected | Why |
 |----------|-----|
-| WebSocket latency + HTTP load | Extra complexity; worse behind some proxies; LibreQoS deliberately stayed HTTP-only |
-| Split load-server + API processes | Overkill for OpenWrt; harder to package |
+| WebSocket latency + HTTP load | Extra complexity; worse behind some proxies |
+| Split load-server + API | Overkill for OpenWrt |
 
-**Language:** Go (stdlib HTTP; embed static UI).  
-**Auth:** none (open URL).  
-**Concurrency:** one active test at a time (critical on routers).
+**Language:** Go (stdlib HTTP; `go:embed` UI).
+**Auth:** none.
+**Concurrency:** one active test (`/test/begin` lock); load endpoints require `X-Session-Id`.
 
 ## Architecture
 
 ```text
-Browser ──► GET  /              (embedded UI)
-         ──► GET  /ping          (RTT measured in browser / Web Worker)
-         ──► GET  /download      (saturate downlink)
-         ──► POST /upload        (saturate uplink)
-         ──► POST /test/begin|end (optional session lock)
+Browser ──► GET  /                 (embedded UI)
+         ──► GET  /api/config
+         ──► GET  /ping             (RTT; Web Worker)
+         ──► GET  /download         (requires session)
+         ──► POST /upload           (requires session)
+         ──► POST /test/begin|end
          ──► GET  /health
               │
          Go binary (VPS or OpenWrt)
 ```
 
-### Test flow (~30 seconds)
+### Test flow (~40–60 s wall clock)
 
-1. **Baseline (~0–5 s)** — latency samples only.  
-2. **Download saturation (~5–15 s)** — parallel HTTP GETs + continuous latency.  
-3. **Upload saturation (~15–25 s)** — parallel HTTP POSTs + continuous latency.  
-4. **Cooldown / analysis (~25–30 s)** — stop load, compute percentiles, grades, throughput.
+UI-driven phases (scored phases use warm-up-chosen streams/chunk):
 
-Timing windows are configurable defaults; UI drives the phases.
+1. **Baseline** — idle RTT only (**no** RPM bursts; keeps idle p50 clean).
+2. **Warm-up** — raise download streams/chunk until throughput plateaus.
+3. **Drain (~2 s)** — no load; avoid warm-up queue carry-over into grades.
+4. **Download (scored)** — parallel GETs + latency + RPM bursts.
+5. **Drain (~1 s)**
+6. **Upload (scored)** — parallel POSTs + latency + RPM (fewer streams; cheaper CPU).
+7. **Drain (~1 s)**
+8. **Bidirectional (scored)** — down + up together; separate grade.
+9. **Recovery** — no load; time until **3 consecutive** samples ≤ idle p50 + 5 ms.
+10. **Analysis** — compute cards / overall grade.
+
+**Overall grade** = worse of download / upload / bidirectional (LibreQoS-style increase: loaded p90 − idle p5, noise floor 2 ms).
 
 ### Where measurement applies
 
-- **Server on VPS, client at home** → path through ISP (classic bufferbloat).  
-- **Server on OpenWrt, client on LAN** → mainly LAN/Wi‑Fi ↔ router path.  
-- **Server on OpenWrt, client from WAN** → possible but operator must open the port; no auth in v1.
-
-Document this clearly in the README so results are not misinterpreted.
+| Server location | What you mostly measure |
+|-----------------|-------------------------|
+| VPS | Path through ISP |
+| OpenWrt + client on LAN | LAN / Wi‑Fi ↔ router |
+| OpenWrt from WAN | External path to router (open port; no auth) |
 
 ## API
 
 | Method | Path | Role |
 |--------|------|------|
-| `GET` | `/` | Static UI (`go:embed`) |
-| `GET` | `/health` | Liveness (`{"ok":true}`) |
-| `GET` | `/ping` | Tiny response; client timestamps RTT (optional server `Date` / custom header) |
-| `GET` | `/download?size=N` | Stream `N` bytes (or chunked until client aborts) |
-| `POST` | `/upload` | Discard body; return bytes received |
-| `POST` | `/test/begin` | Acquire test lock; `409` if busy |
+| `GET` | `/` | Static UI |
+| `GET` | `/health` | Liveness |
+| `GET` | `/api/config` | `downloadStreams`, `uploadStreams`, `maxConcurrent` |
+| `GET` | `/ping` | Latency probe (optional `X-Session-Id` refreshes lock TTL) |
+| `GET` | `/download?size=N` | Downlink saturation (**session required**) |
+| `POST` | `/upload` | Uplink saturation (**session required**) |
+| `POST` | `/test/begin` | Acquire lock → `409` if busy |
 | `POST` | `/test/end` | Release lock |
 
-### Locking
+Load without session → **403**.
 
-- Default `--max-concurrent 1`.  
-- Lock auto-expires after ~60 s if client dies.  
-- Concurrent begin while locked → HTTP **409** and UI message.
+### Locking / config
 
-### Configuration (flags / env)
+- `--max-concurrent` default `1`.
+- `--lock-ttl` default **90s** (full run can approach a minute).
+- `--download-streams` / `--upload-streams` (UI hints; warm-up may raise download streams).
+- Env: `LISTEN`, `MAX_CONCURRENT`, `DOWNLOAD_STREAMS`, `UPLOAD_STREAMS`.
 
-- `--listen` (default `:8080`)  
-- `--max-concurrent` (default `1`)  
-- Optional UI hints: suggested parallel stream count for fast links  
+## Metrics definitions
 
-## UI and metrics
-
-### UI
-
-- Large **Start** control.  
-- Live phase label, throughput, latency time series (Chart.js or lightweight canvas).  
-- Phase-colored chart (baseline / download / upload).  
-- Results cards: idle latency, loaded down/up, increase, throughput down/up, grades.
-
-### Percentiles
-
-- Report at least **p50** and **p95** per phase.  
-- Bufferbloat increase (LibreQoS-style): **loaded p90 − idle p5**, treating differences **&lt; 2 ms** as noise.  
-- Grade **download and upload separately**; **overall = worse of the two**.
+| Metric | Definition |
+|--------|------------|
+| Increase | loaded p90 − idle p5; &lt; 2 ms → 0 |
+| Grade | A+…F from increase (same thresholds as LibreQoS Bufferbloat-Test) |
+| Probe loss | Failed HTTP `/ping` **transport** only (not ICMP; not slow replies) |
+| Jitter | Mean \|ΔRTT\| on successful probes (per phase; not concatenated) |
+| RPM (SLA) | Successful probes/min finishing within `max(80 ms, 3× idle p50)`; slow OK replies lower RPM only |
+| Recovery | Elapsed ms until 3 consecutive samples ≤ idle p50 + 5 ms (timestamped) |
 
 ### Grade scale (latency increase)
 
@@ -116,74 +121,58 @@ Document this clearly in the README so results are not misinterpreted.
 | &lt; 400 ms | D |
 | ≥ 400 ms | F |
 
-### CLI (bonus, non-blocking)
+## UI
 
-- `bufferbloat-test --json` against local or `--url http://host:8080`.  
-- Same metrics as web; may ship after web MVP.
+- Pill **Start** button; phase rail (baseline → warm-up → down → up → both → recovery).
+- Live gauges (latency / throughput), probe loss / jitter / RPM readouts.
+- Canvas latency chart with phase colors.
+- Results: overall medal + down/up/bidir grades with bloat meters + detail cards.
+- Ping probes run in a **Web Worker** (`ping-worker.js`).
+- Upload payload: cheap tiled Blob (no multi‑MiB `crypto.getRandomValues`).
+
+## CLI
+
+`cmd/cli` against `--url` with optional `--json`. Same phase ideas (warm-up, drains, bidir, recovery). RPM is sequential with the same SLA budget (not parallel bursts like the browser).
 
 ## Repository layout
 
 ```text
 custom-bufferbloat/
   cmd/server/main.go
-  internal/handlers/     # ping, download, upload, health, begin/end
-  internal/lock/         # single-flight test lock + TTL
-  web/                   # HTML/CSS/JS (embedded)
-  openwrt/               # OpenWrt package Makefile + procd init
+  cmd/cli/main.go
+  internal/handlers/
+  internal/lock/
+  internal/metrics/
+  web/                   # index.html, app.js, style.css, ping-worker.js
+  openwrt/               # package Makefile + procd init
+  scripts/build-openwrt-binary.sh
   Dockerfile
   README.md
+  docs/screen-shoots/screen.png
   docs/superpowers/specs/2026-10-17-bufferbloat-test-design.md
 ```
 
-## Packaging and deploy
+## Packaging
 
-### VPS
+- **VPS:** Docker or static binary.
+- **OpenWrt:** cross-compile into `openwrt/files/usr/bin/` + procd init; or `scp` install path in README.
 
-- Multi-arch binary (`linux/amd64`, `linux/arm64`) and/or `Dockerfile`.  
-- Listen on `:8080` (or behind Caddy/nginx for TLS later).
+## Testing
 
-### OpenWrt
-
-- Cross-compile (`GOOS=linux`, board `GOARCH` / `GOMIPS` as needed).  
-- Package under `openwrt/` with **procd** init, default listen `0.0.0.0:8080`.  
-- Keep binary size and CPU use in mind: one test lock, avoid unbounded streams.
-
-## Error handling
-
-- **409** — test already running.  
-- Network / ping failures — end with partial results + warning in UI.  
-- Cap upload size and download duration so handlers cannot hang forever.  
-- `/health` for operators.
-
-## Testing strategy
-
-- **Go unit tests:** handlers (ping body, download length, upload sink), lock 409 / TTL release.  
-- **Manual:** local binary in browser → VPS → OpenWrt device.  
+- Go unit tests: handlers, lock, metrics (grades, jitter, loss, recovery stable).
+- Manual: browser + CLI against local/VPS/router.
 - No automated browser E2E in v1.
 
-## Implementation order (high level)
+## Known limitations
 
-1. Go server: `/health`, `/ping`, `/download`, `/upload`, lock begin/end.  
-2. Embed minimal UI: run phases, collect samples, compute grades.  
-3. LibreQoS-like charts and result cards.  
-4. Dockerfile + README (VPS path).  
-5. OpenWrt package + init.  
-6. Optional CLI.
+- Probe loss ≠ packet loss.
+- Warm-up windows are short; may under-saturate multi‑gig links.
+- Browser ~6 connections/host limits parallel streams.
+- Upload is client-CPU heavy — keep upload streams low.
+- No auth — do not expose WAN bare.
 
-## Open decisions resolved
+## Risks (mitigations)
 
-| Topic | Decision |
-|-------|----------|
-| Product shape | Self-hosted web app (not LuCI-first); CLI later |
-| Deploy targets | Both VPS and OpenWrt, one codebase |
-| Language | Go |
-| MVP richness | LibreQoS-like UI (percentiles, up/down charts, grades) |
-| Auth | None in v1 |
-| Transport | HTTP-only |
-
-## Risks
-
-- **Router CPU / RAM** under multi-stream load — mitigate with stream caps and single-test lock.  
-- **Misread results** when server is on LAN router — document measurement path.  
-- **Open WAN + no auth** — document as operator responsibility; auth deferred.  
-- **Gigabit saturation from browser** — may need several parallel streams; tune defaults after real runs.
+- Router CPU — session lock, stream caps, cheap upload payload.
+- Misread LAN results — documented in README.
+- Lock expiry mid-test — 90s TTL + Touch on ping with session header.

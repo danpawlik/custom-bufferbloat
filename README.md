@@ -38,7 +38,11 @@ Then open in a browser:
 - same machine: [http://127.0.0.1:8080](http://127.0.0.1:8080)
 - another device on LAN: `http://<host-lan-ip>:8080`
 
-Click **Start test**. The run takes ~30 seconds (baseline → download load → upload load → results).
+Click **Start test**. The run takes ~40–45 seconds:
+
+baseline → **warm-up** (find saturation) → download → upload → **bidirectional** → **recovery** → results
+
+(with **loss / jitter / RPM** reported per load phase).
 
 Health check:
 
@@ -74,7 +78,7 @@ go run ./cmd/cli -url http://127.0.0.1:8080 -json
 ./bufferbloat-test-cli -url http://192.168.1.1:8080 -json
 ```
 
-The CLI talks to the same HTTP API as the browser (~25–30 s).
+The CLI talks to the same HTTP API as the browser (~40–60 s, including warm-up / drains / bidir / recovery).
 
 ### 4. OpenWrt
 
@@ -118,7 +122,7 @@ Default listen: `0.0.0.0:8080`, max one concurrent test. Optionally integrate `o
 |--------|------|------|
 | `GET` | `/` | Web UI |
 | `GET` | `/health` | Liveness |
-| `GET` | `/api/config` | UI hints (`downloadStreams`) |
+| `GET` | `/api/config` | UI hints (`downloadStreams`, `uploadStreams`, `maxConcurrent`) |
 | `GET` | `/ping` | Latency probe |
 | `GET` | `/download?size=N` | Download saturation (requires `X-Session-Id`) |
 | `POST` | `/upload` | Upload saturation (requires `X-Session-Id`) |
@@ -134,7 +138,7 @@ Load endpoints return **403** without an active session from `/test/begin`.
 -max-concurrent 1
 -download-streams 4
 -upload-streams 2
--lock-ttl 1m
+-lock-ttl 90s
 ```
 
 Env overrides: `LISTEN`, `MAX_CONCURRENT`, `DOWNLOAD_STREAMS`, `UPLOAD_STREAMS`.
@@ -158,8 +162,14 @@ Stripped server binary is ~6 MiB (OK on modern OpenWrt boards; tight on tiny f
 ### Methodology notes
 
 - Latency samples use a **Web Worker** so main-thread download/upload work does not fake bufferbloat.
-- Grades use LibreQoS-style **loaded p90 − idle p5** (noise floor 2 ms); overall = worse of down/up.
-- Browser connection limits (~6 per host) → default **4** download / **2** upload streams (upload is CPU-heavier on the client).
+- **Warm-up** raises parallel streams / chunk size until throughput plateaus; a short **drain** follows so leftover queues do not inflate scored grades.
+- Grades use LibreQoS-style **loaded p90 − idle p5** (noise floor 2 ms); **overall = worse of download / upload / bidirectional**.
+- **Probe loss** = failed HTTP `/ping` transport only (timeouts/errors) — **not** raw packet loss and **not** slow replies.
+- **RPM (SLA)** ≈ probes/min that finish within `max(80 ms, 3× idle p50)`; slow-but-successful replies lower RPM, they do not inflate probe loss.
+- **Jitter** = mean |ΔRTT| on successful probes.
+- **Recovery** = time until **3 consecutive** samples are ≤ idle p50 + 5 ms (timestamped, not assumed 200 ms spacing).
+- Short drains also sit between down→up and up→bidir.
+- Browser connection limits (~6 per host) → warm-up caps streams; upload stays lower (client CPU).
 - Load endpoints require an active `/test/begin` session (`X-Session-Id`).
 
 Design spec: [docs/superpowers/specs/2026-10-17-bufferbloat-test-design.md](docs/superpowers/specs/2026-10-17-bufferbloat-test-design.md)

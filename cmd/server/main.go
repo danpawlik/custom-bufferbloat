@@ -18,7 +18,7 @@ func main() {
 	maxConcurrent := flag.Int("max-concurrent", envInt("MAX_CONCURRENT", 1), "max concurrent tests")
 	streams := flag.Int("download-streams", envInt("DOWNLOAD_STREAMS", 4), "suggested parallel download streams for UI")
 	upStreams := flag.Int("upload-streams", envInt("UPLOAD_STREAMS", 2), "suggested parallel upload streams for UI (keep low to reduce client CPU)")
-	lockTTL := flag.Duration("lock-ttl", 60*time.Second, "test lock TTL")
+	lockTTL := flag.Duration("lock-ttl", 90*time.Second, "test lock TTL (full run is ~45–60s)")
 	flag.Parse()
 
 	l := lock.New(*maxConcurrent, *lockTTL)

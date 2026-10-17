@@ -22,9 +22,8 @@
       </div>
       <h1>Bufferbloat<br /><span class="title-accent">Test</span></h1>
       <p class="lede">
-        Like Waveform / LibreQoS / Cloudflare Speed — but pointing at
-        <strong>this server</strong>. Idle latency, then download &amp; upload saturation,
-        then an A+–F grade for how much the queue bloats.
+        Warm-up to saturate the link, then download, upload, and bidirectional load
+        with loss / jitter / responsiveness (RPM), plus recovery after the load stops.
       </p>
 
       <div class="hero-actions" id="heroStage">
@@ -37,9 +36,11 @@
 
     <ol class="phase-rail" id="phaseRail" aria-label="Test phases">
       <li data-phase="baseline" class="phase-step"><span class="num">01</span><span class="name">Baseline</span></li>
-      <li data-phase="download" class="phase-step"><span class="num">02</span><span class="name">Download</span></li>
-      <li data-phase="upload" class="phase-step"><span class="num">03</span><span class="name">Upload</span></li>
-      <li data-phase="cooldown" class="phase-step"><span class="num">04</span><span class="name">Score</span></li>
+      <li data-phase="warmup" class="phase-step"><span class="num">02</span><span class="name">Warm-up</span></li>
+      <li data-phase="download" class="phase-step"><span class="num">03</span><span class="name">Download</span></li>
+      <li data-phase="upload" class="phase-step"><span class="num">04</span><span class="name">Upload</span></li>
+      <li data-phase="bidir" class="phase-step"><span class="num">05</span><span class="name">Both</span></li>
+      <li data-phase="recovery" class="phase-step"><span class="num">06</span><span class="name">Recovery</span></li>
     </ol>
     <div class="phase-progress"><div id="phaseBar" class="phase-bar"></div></div>
 
@@ -63,6 +64,11 @@
           <span class="label">Phase</span>
           <span id="phase" class="phase-name">—</span>
           <span id="phaseHint" class="phase-hint">Waiting</span>
+          <div class="live-extras">
+            <span>Probe loss <strong id="liveLoss">—</strong></span>
+            <span>Jitter <strong id="liveJitter">—</strong></span>
+            <span>RPM <strong id="liveRpm">—</strong></span>
+          </div>
         </div>
       </div>
       <div class="chart-wrap">
@@ -72,6 +78,8 @@
             <span class="lg baseline">Idle</span>
             <span class="lg down">Down</span>
             <span class="lg up">Up</span>
+            <span class="lg bi">Both</span>
+            <span class="lg rec">Recovery</span>
           </div>
         </div>
         <canvas id="latencyChart" height="160"></canvas>
@@ -81,7 +89,7 @@
     <section class="results" id="results" hidden>
       <div class="results-head">
         <h2>Results</h2>
-        <p class="results-sub">Loaded p90 − idle p5 · overall = worse direction</p>
+        <p class="results-sub">Overall = worse of down / up / bidirectional · plus loss, jitter, RPM, recovery</p>
       </div>
 
       <div class="grade-hero" id="gradeHero">
@@ -104,6 +112,13 @@
             <span class="grade">—</span>
             <div class="bloat-meter"><div class="bloat-fill" id="bloatUp"></div></div>
             <span class="bloat-label" id="bloatUpLabel">—</span>
+          </div>
+          <div class="grade-card" id="gradeBi">
+            <span class="dir-icon bi" aria-hidden="true">⇄</span>
+            <span class="label">Bidirectional</span>
+            <span class="grade">—</span>
+            <div class="bloat-meter"><div class="bloat-fill" id="bloatBi"></div></div>
+            <span class="bloat-label" id="bloatBiLabel">—</span>
           </div>
         </div>
       </div>
