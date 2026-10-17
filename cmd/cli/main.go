@@ -19,10 +19,11 @@ import (
 func main() {
 	baseURL := flag.String("url", "http://127.0.0.1:8080", "server base URL")
 	jsonOut := flag.Bool("json", false, "print JSON result")
-	streams := flag.Int("streams", 4, "parallel load streams")
+	downStreams := flag.Int("streams", 4, "parallel download streams")
+	upStreams := flag.Int("upload-streams", 2, "parallel upload streams (lower = less client CPU)")
 	flag.Parse()
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 120 * time.Second}
 	sessionID := fmt.Sprintf("cli-%d", time.Now().UnixNano())
 
 	if err := begin(client, *baseURL, sessionID); err != nil {
@@ -32,8 +33,8 @@ func main() {
 	defer end(client, *baseURL, sessionID)
 
 	idle := sampleLatency(client, *baseURL, sessionID, 5*time.Second)
-	downBytes, downDur, downLat := runLoad(client, *baseURL, sessionID, *streams, 10*time.Second, true)
-	upBytes, upDur, upLat := runLoad(client, *baseURL, sessionID, *streams, 10*time.Second, false)
+	downBytes, downDur, downLat := runLoad(client, *baseURL, sessionID, *downStreams, 10*time.Second, true)
+	upBytes, upDur, upLat := runLoad(client, *baseURL, sessionID, *upStreams, 10*time.Second, false)
 
 	downInc := metrics.Increase(idle, downLat)
 	upInc := metrics.Increase(idle, upLat)

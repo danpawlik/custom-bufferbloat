@@ -14,7 +14,7 @@ import (
 )
 
 func testServer() *Server {
-	return New(lock.New(1, time.Minute), 4, 1)
+	return New(lock.New(1, time.Minute), 4, 2, 1)
 }
 
 func beginSession(t *testing.T, s *Server, id string) {
@@ -125,11 +125,15 @@ func TestBeginConflict(t *testing.T) {
 }
 
 func TestConfigMaxConcurrent(t *testing.T) {
-	s := New(lock.New(2, time.Minute), 4, 2)
+	s := New(lock.New(2, time.Minute), 4, 2, 2)
 	rr := httptest.NewRecorder()
 	s.Config(rr, httptest.NewRequest(http.MethodGet, "/api/config", nil))
-	if !strings.Contains(rr.Body.String(), `"maxConcurrent":2`) {
-		t.Fatalf("body=%s", rr.Body.String())
+	body := rr.Body.String()
+	if !strings.Contains(body, `"maxConcurrent":2`) {
+		t.Fatalf("body=%s", body)
+	}
+	if !strings.Contains(body, `"uploadStreams":2`) {
+		t.Fatalf("missing uploadStreams: %s", body)
 	}
 }
 

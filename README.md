@@ -129,10 +129,13 @@ Load endpoints return **403** without an active session from `/test/begin`.
 -listen :8080
 -max-concurrent 1
 -download-streams 4
+-upload-streams 2
 -lock-ttl 1m
 ```
 
-Env overrides: `LISTEN`, `MAX_CONCURRENT`, `DOWNLOAD_STREAMS`.
+Env overrides: `LISTEN`, `MAX_CONCURRENT`, `DOWNLOAD_STREAMS`, `UPLOAD_STREAMS`.
+
+Upload uses fewer parallel streams by default: generating/sending bodies is **client-CPU heavy** and can inflate latency samples if the browser is saturated.
 
 ## Security note
 
@@ -152,7 +155,7 @@ Stripped server binary is ~6 MiB (OK on modern OpenWrt boards; tight on tiny f
 
 - Latency samples use a **Web Worker** so main-thread download/upload work does not fake bufferbloat.
 - Grades use LibreQoS-style **loaded p90 − idle p5** (noise floor 2 ms); overall = worse of down/up.
-- Browser connection limits (~6 per host) → default **4** parallel load streams leaves room for pings.
+- Browser connection limits (~6 per host) → default **4** download / **2** upload streams (upload is CPU-heavier on the client).
 - Load endpoints require an active `/test/begin` session (`X-Session-Id`).
 
 Design spec: [docs/superpowers/specs/2026-10-17-bufferbloat-test-design.md](docs/superpowers/specs/2026-10-17-bufferbloat-test-design.md)

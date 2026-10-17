@@ -26,9 +26,12 @@
 
   let chartPoints = [];
   let downloadStreams = 4;
+  // Upload is client-CPU heavy; fewer streams keep latency probes honest.
+  let uploadStreams = 2;
   let abortControllers = [];
   let pingFailures = 0;
   let sessionId = null;
+  let uploadBlob = null;
   let pingWorker = null;
   let pingSeq = 0;
   const pingWaiters = new Map();
@@ -106,6 +109,8 @@
       if (r.ok) {
         const j = await r.json();
         if (j.downloadStreams) downloadStreams = j.downloadStreams;
+        if (j.uploadStreams) uploadStreams = j.uploadStreams;
+        else uploadStreams = Math.max(1, Math.min(2, downloadStreams));
       }
     } catch (_) {
       /* defaults */
@@ -273,20 +278,33 @@
     return () => controllers.forEach((c) => c.abort());
   }
 
-  // Browsers cap crypto.getRandomValues at 65536 bytes per call.
-  function randomPayload(size) {
-    const buf = new Uint8Array(size);
-    const max = 65536;
-    for (let off = 0; off < size; off += max) {
-      crypto.getRandomValues(buf.subarray(off, Math.min(off + max, size)));
+  // Cheap semi-random Blob (no crypto). Crypto.getRandomValues on multi-MiB
+  // payloads spikes CPU and can skew latency-under-load measurements.
+  function getUploadBlob(size) {
+    if (uploadBlob && uploadBlob.size === size) return uploadBlob;
+    const tileSize = 65536;
+    const tile = new Uint8Array(tileSize);
+    let x = 0xa5a5a5a5;
+    for (let i = 0; i < tileSize; i++) {
+      x = (Math.imul(1664525, x) + 1013904223) >>> 0;
+      tile[i] = x >>> 24;
     }
-    return buf;
+    const parts = [];
+    let rem = size;
+    while (rem >= tileSize) {
+      parts.push(tile);
+      rem -= tileSize;
+    }
+    if (rem > 0) parts.push(tile.subarray(0, rem));
+    uploadBlob = new Blob(parts, { type: "application/octet-stream" });
+    return uploadBlob;
   }
 
   function startUploadLoad(bytesRef) {
     const controllers = [];
-    const payload = randomPayload(CHUNK);
-    for (let i = 0; i < downloadStreams; i++) {
+    const blob = getUploadBlob(CHUNK);
+    const n = Math.max(1, uploadStreams);
+    for (let i = 0; i < n; i++) {
       const ac = new AbortController();
       controllers.push(ac);
       abortControllers.push(ac);
@@ -295,13 +313,18 @@
           try {
             const r = await fetch("/upload", {
               method: "POST",
-              body: payload,
+              body: blob,
               signal: ac.signal,
               headers: sessionHeaders(),
             });
             if (r.ok) {
-              const j = await r.json();
-              bytesRef.value += j.received || payload.byteLength;
+              // Avoid JSON parse / body copy — count known size, drop response.
+              bytesRef.value += blob.size;
+              if (r.body) {
+                try {
+                  await r.body.cancel();
+                } catch (_) {}
+              }
             }
           } catch (_) {
             if (ac.signal.aborted) return;

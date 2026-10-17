@@ -16,12 +16,13 @@ import (
 func main() {
 	listen := flag.String("listen", envOr("LISTEN", ":8080"), "listen address")
 	maxConcurrent := flag.Int("max-concurrent", envInt("MAX_CONCURRENT", 1), "max concurrent tests")
-	streams := flag.Int("download-streams", envInt("DOWNLOAD_STREAMS", 4), "suggested parallel streams for UI")
+	streams := flag.Int("download-streams", envInt("DOWNLOAD_STREAMS", 4), "suggested parallel download streams for UI")
+	upStreams := flag.Int("upload-streams", envInt("UPLOAD_STREAMS", 2), "suggested parallel upload streams for UI (keep low to reduce client CPU)")
 	lockTTL := flag.Duration("lock-ttl", 60*time.Second, "test lock TTL")
 	flag.Parse()
 
 	l := lock.New(*maxConcurrent, *lockTTL)
-	api := handlers.New(l, *streams, *maxConcurrent)
+	api := handlers.New(l, *streams, *upStreams, *maxConcurrent)
 
 	mux := http.NewServeMux()
 	api.Routes(mux)

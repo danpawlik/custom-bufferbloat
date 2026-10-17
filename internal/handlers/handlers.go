@@ -24,12 +24,17 @@ const (
 type Server struct {
 	Lock            *lock.TestLock
 	DownloadStreams int
+	UploadStreams   int
 	MaxConcurrent   int
 }
 
-func New(l *lock.TestLock, downloadStreams, maxConcurrent int) *Server {
+func New(l *lock.TestLock, downloadStreams, uploadStreams, maxConcurrent int) *Server {
 	if downloadStreams < 1 {
 		downloadStreams = 4
+	}
+	if uploadStreams < 1 {
+		// Upload is client-CPU heavy; default lower than download.
+		uploadStreams = 2
 	}
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
@@ -37,6 +42,7 @@ func New(l *lock.TestLock, downloadStreams, maxConcurrent int) *Server {
 	return &Server{
 		Lock:            l,
 		DownloadStreams: downloadStreams,
+		UploadStreams:   uploadStreams,
 		MaxConcurrent:   maxConcurrent,
 	}
 }
@@ -58,6 +64,7 @@ func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Config(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"downloadStreams": s.DownloadStreams,
+		"uploadStreams":   s.UploadStreams,
 		"maxConcurrent":   s.MaxConcurrent,
 	})
 }
