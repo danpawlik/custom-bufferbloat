@@ -1,0 +1,157 @@
+:root {
+  --bg: #0f1419;
+  --panel: #1a222c;
+  --text: #e7eef7;
+  --muted: #8b9bb0;
+  --accent: #3dd6c6;
+  --accent-dim: #2a9d8f;
+  --warn: #f4a261;
+  --bad: #e76f51;
+  --ok: #2a9d8f;
+  --baseline: #5b8def;
+  --down: #3dd6c6;
+  --up: #f4a261;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font);
+  color: var(--text);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #1d3a4a 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #2a1f3d 0%, transparent 50%),
+    var(--bg);
+}
+
+.wrap {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 3rem;
+}
+
+.hero h1 {
+  margin: 0.2rem 0 0.6rem;
+  font-size: clamp(2rem, 5vw, 3rem);
+  letter-spacing: -0.03em;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.75rem;
+  color: var(--accent);
+  margin: 0;
+}
+
+.lede {
+  color: var(--muted);
+  max-width: 42rem;
+  line-height: 1.5;
+}
+
+#startBtn {
+  margin-top: 1rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.85rem 1.8rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #041016;
+  background: linear-gradient(135deg, var(--accent), #7cf0d4);
+  cursor: pointer;
+}
+
+#startBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status {
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.9rem;
+}
+
+.live, .results {
+  margin-top: 2rem;
+  background: color-mix(in srgb, var(--panel) 92%, black);
+  border: 1px solid #2a3544;
+  border-radius: 16px;
+  padding: 1.25rem;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.stats .label, .grade-card .label, .card .label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.stats span:last-child, .card .value {
+  font-family: var(--mono);
+  font-size: 1.05rem;
+}
+
+.grades {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin: 1rem 0 1.25rem;
+}
+
+.grade-card {
+  background: #121820;
+  border-radius: 12px;
+  padding: 1rem;
+  text-align: center;
+}
+
+.grade-card .grade {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.card {
+  background: #121820;
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+}
+
+.warning {
+  color: var(--warn);
+  margin-top: 1rem;
+}
+
+.note {
+  margin-top: 2rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 640px) {
+  .stats, .grades { grid-template-columns: 1fr; }
+}

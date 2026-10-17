@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bufferbloat Test</title>
+  <link rel="stylesheet" href="/style.css" />
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <p class="eyebrow">Self-hosted</p>
+      <h1>Bufferbloat Test</h1>
+      <p class="lede">
+        Measures latency under download and upload load (LibreQoS-style).
+        Results reflect the path between <strong>this browser</strong> and <strong>this server</strong>.
+      </p>
+      <button id="startBtn" type="button">Start test</button>
+      <p id="status" class="status" aria-live="polite">Ready</p>
+    </header>
+
+    <section class="live" id="livePanel" hidden>
+      <div class="stats">
+        <div><span class="label">Phase</span><span id="phase">—</span></div>
+        <div><span class="label">Latency</span><span id="liveLatency">—</span></div>
+        <div><span class="label">Throughput</span><span id="liveThroughput">—</span></div>
+      </div>
+      <canvas id="latencyChart" height="120"></canvas>
+    </section>
+
+    <section class="results" id="results" hidden>
+      <h2>Results</h2>
+      <div class="grades">
+        <div class="grade-card" id="gradeOverall"><span class="label">Overall</span><span class="grade">—</span></div>
+        <div class="grade-card" id="gradeDown"><span class="label">Download</span><span class="grade">—</span></div>
+        <div class="grade-card" id="gradeUp"><span class="label">Upload</span><span class="grade">—</span></div>
+      </div>
+      <div class="cards" id="resultCards"></div>
+      <p id="warning" class="warning" hidden></p>
+    </section>
+
+    <footer class="note">
+      No authentication · one test at a time · HTTP-only probes.
+      On a LAN OpenWrt install this mostly measures LAN/Wi‑Fi, not ISP bufferbloat.
+    </footer>
+  </main>
+</body>
+</html>
