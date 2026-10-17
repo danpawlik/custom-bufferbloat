@@ -4,38 +4,110 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bufferbloat Test</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
   <script src="/app.js" defer></script>
 </head>
 <body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+
   <main class="wrap">
     <header class="hero">
-      <p class="eyebrow">Self-hosted</p>
-      <h1>Bufferbloat Test</h1>
+      <div class="brand-row">
+        <span class="badge-dot"></span>
+        <p class="eyebrow">Self-hosted · HTTP latency under load</p>
+      </div>
+      <h1>Bufferbloat<br /><span class="title-accent">Test</span></h1>
       <p class="lede">
-        Measures latency under download and upload load (LibreQoS-style).
-        Results reflect the path between <strong>this browser</strong> and <strong>this server</strong>.
+        Like Waveform / LibreQoS / Cloudflare Speed — but pointing at
+        <strong>this server</strong>. Idle latency, then download &amp; upload saturation,
+        then an A+–F grade for how much the queue bloats.
       </p>
-      <button id="startBtn" type="button">Start test</button>
-      <p id="status" class="status" aria-live="polite">Ready</p>
+
+      <div class="hero-actions" id="heroStage">
+        <button id="startBtn" type="button" class="start-btn">
+          <span class="start-label">Start test</span>
+        </button>
+      </div>
+      <p id="status" class="status" aria-live="polite">Ready — wired Ethernet recommended</p>
     </header>
 
+    <ol class="phase-rail" id="phaseRail" aria-label="Test phases">
+      <li data-phase="baseline" class="phase-step"><span class="num">01</span><span class="name">Baseline</span></li>
+      <li data-phase="download" class="phase-step"><span class="num">02</span><span class="name">Download</span></li>
+      <li data-phase="upload" class="phase-step"><span class="num">03</span><span class="name">Upload</span></li>
+      <li data-phase="cooldown" class="phase-step"><span class="num">04</span><span class="name">Score</span></li>
+    </ol>
+    <div class="phase-progress"><div id="phaseBar" class="phase-bar"></div></div>
+
     <section class="live" id="livePanel" hidden>
-      <div class="stats">
-        <div><span class="label">Phase</span><span id="phase">—</span></div>
-        <div><span class="label">Latency</span><span id="liveLatency">—</span></div>
-        <div><span class="label">Throughput</span><span id="liveThroughput">—</span></div>
+      <div class="gauge-row">
+        <div class="gauge-card">
+          <canvas id="latencyGauge" width="220" height="140"></canvas>
+          <div class="gauge-readout">
+            <span class="label">Latency</span>
+            <span id="liveLatency" class="value">—</span>
+          </div>
+        </div>
+        <div class="gauge-card">
+          <canvas id="speedGauge" width="220" height="140"></canvas>
+          <div class="gauge-readout">
+            <span class="label">Throughput</span>
+            <span id="liveThroughput" class="value">—</span>
+          </div>
+        </div>
+        <div class="phase-card">
+          <span class="label">Phase</span>
+          <span id="phase" class="phase-name">—</span>
+          <span id="phaseHint" class="phase-hint">Waiting</span>
+        </div>
       </div>
-      <canvas id="latencyChart" height="120"></canvas>
+      <div class="chart-wrap">
+        <div class="chart-head">
+          <span class="label">Latency over time</span>
+          <div class="legend">
+            <span class="lg baseline">Idle</span>
+            <span class="lg down">Down</span>
+            <span class="lg up">Up</span>
+          </div>
+        </div>
+        <canvas id="latencyChart" height="160"></canvas>
+      </div>
     </section>
 
     <section class="results" id="results" hidden>
-      <h2>Results</h2>
-      <div class="grades">
-        <div class="grade-card" id="gradeOverall"><span class="label">Overall</span><span class="grade">—</span></div>
-        <div class="grade-card" id="gradeDown"><span class="label">Download</span><span class="grade">—</span></div>
-        <div class="grade-card" id="gradeUp"><span class="label">Upload</span><span class="grade">—</span></div>
+      <div class="results-head">
+        <h2>Results</h2>
+        <p class="results-sub">Loaded p90 − idle p5 · overall = worse direction</p>
       </div>
+
+      <div class="grade-hero" id="gradeHero">
+        <div class="medal" id="gradeOverall">
+          <span class="label">Overall grade</span>
+          <span class="grade">—</span>
+          <span class="medal-caption" id="gradeCaption">—</span>
+        </div>
+        <div class="dir-grades">
+          <div class="grade-card" id="gradeDown">
+            <span class="dir-icon down" aria-hidden="true">↓</span>
+            <span class="label">Download</span>
+            <span class="grade">—</span>
+            <div class="bloat-meter"><div class="bloat-fill" id="bloatDown"></div></div>
+            <span class="bloat-label" id="bloatDownLabel">—</span>
+          </div>
+          <div class="grade-card" id="gradeUp">
+            <span class="dir-icon up" aria-hidden="true">↑</span>
+            <span class="label">Upload</span>
+            <span class="grade">—</span>
+            <div class="bloat-meter"><div class="bloat-fill" id="bloatUp"></div></div>
+            <span class="bloat-label" id="bloatUpLabel">—</span>
+          </div>
+        </div>
+      </div>
+
       <div class="cards" id="resultCards"></div>
       <p id="warning" class="warning" hidden></p>
     </section>

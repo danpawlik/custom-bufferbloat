@@ -4,6 +4,10 @@ Self-hosted **LibreQoS-style** bufferbloat test: one **Go** binary for **VPS** a
 
 The browser (or CLI) talks to **this server** over HTTP: idle latency, then latency under download/upload load, with percentiles and grades **A+–F**.
 
+## Screenshot
+
+![Bufferbloat Test web UI](docs/screen-shoots/screen.png)
+
 ## What the result means
 
 | Where the server runs | What you mostly measure |

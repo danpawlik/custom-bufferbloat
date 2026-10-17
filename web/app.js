@@ -11,18 +11,35 @@
 
   const el = {
     start: document.getElementById("startBtn"),
+    startLabel: document.querySelector(".start-label"),
     status: document.getElementById("status"),
     live: document.getElementById("livePanel"),
     phase: document.getElementById("phase"),
+    phaseHint: document.getElementById("phaseHint"),
+    phaseBar: document.getElementById("phaseBar"),
+    phaseRail: document.getElementById("phaseRail"),
+    heroStage: document.getElementById("heroStage"),
     liveLatency: document.getElementById("liveLatency"),
     liveThroughput: document.getElementById("liveThroughput"),
     results: document.getElementById("results"),
     cards: document.getElementById("resultCards"),
     warning: document.getElementById("warning"),
     gradeOverall: document.querySelector("#gradeOverall .grade"),
+    gradeOverallCard: document.getElementById("gradeOverall"),
+    gradeCaption: document.getElementById("gradeCaption"),
     gradeDown: document.querySelector("#gradeDown .grade"),
     gradeUp: document.querySelector("#gradeUp .grade"),
+    bloatDown: document.getElementById("bloatDown"),
+    bloatUp: document.getElementById("bloatUp"),
+    bloatDownLabel: document.getElementById("bloatDownLabel"),
+    bloatUpLabel: document.getElementById("bloatUpLabel"),
+    latencyGauge: document.getElementById("latencyGauge"),
+    speedGauge: document.getElementById("speedGauge"),
   };
+
+  let gaugeLatency = 0;
+  let gaugeSpeed = 0;
+  let phaseProgress = 0;
 
   let chartPoints = [];
   let downloadStreams = 4;
@@ -154,19 +171,117 @@
     });
   }
 
+  function drawArcGauge(canvas, value, max, color, unit) {
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = 220;
+    const cssH = 130;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const cx = cssW / 2;
+    const cy = cssH - 18;
+    const r = 78;
+    const start = Math.PI;
+    const end = 2 * Math.PI;
+    const t = Math.max(0, Math.min(1, value / max));
+
+    ctx.lineWidth = 12;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#1a2733";
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, start, end);
+    ctx.stroke();
+
+    const grad = ctx.createLinearGradient(cx - r, cy, cx + r, cy);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, "#ffffff88");
+    ctx.strokeStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, start, start + Math.PI * t);
+    ctx.stroke();
+
+    // glow tip
+    const ang = start + Math.PI * t;
+    const tipX = cx + Math.cos(ang) * r;
+    const tipY = cy + Math.sin(ang) * r;
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 12;
+    ctx.arc(tipX, tipY, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = "#7d8fa3";
+    ctx.font = "600 10px JetBrains Mono, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(unit, cx, cy - 8);
+  }
+
+  function updateGauges(latencyMs, mbps) {
+    if (typeof latencyMs === "number" && !Number.isNaN(latencyMs)) {
+      gaugeLatency = latencyMs;
+    }
+    if (typeof mbps === "number" && !Number.isNaN(mbps)) {
+      gaugeSpeed = mbps;
+    }
+    drawArcGauge(el.latencyGauge, gaugeLatency, 200, "#5b9dff", "ms scale");
+    drawArcGauge(el.speedGauge, gaugeSpeed, Math.max(100, gaugeSpeed * 1.2), "#2ee6c5", "Mbps scale");
+  }
+
+  function setPhaseUI(key, meta) {
+    const order = ["baseline", "download", "upload", "cooldown"];
+    const idx = order.indexOf(key);
+    phaseProgress = ((idx + 0.5) / order.length) * 100;
+    if (el.phaseBar) el.phaseBar.style.width = phaseProgress + "%";
+    if (el.phaseRail) {
+      el.phaseRail.querySelectorAll(".phase-step").forEach((node) => {
+        const p = node.getAttribute("data-phase");
+        node.classList.remove("active", "done");
+        const pi = order.indexOf(p);
+        if (pi === idx) node.classList.add("active");
+        else if (pi < idx) node.classList.add("done");
+      });
+    }
+    if (meta) {
+      el.phase.textContent = meta.name;
+      const hints = {
+        baseline: "Measuring idle RTT",
+        download: "Saturating downlink",
+        upload: "Saturating uplink",
+        cooldown: "Computing grades",
+      };
+      if (el.phaseHint) el.phaseHint.textContent = hints[key] || "";
+    }
+  }
+
   function drawChart() {
     const canvas = document.getElementById("latencyChart");
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     const dpr = window.devicePixelRatio || 1;
     const cssW = canvas.clientWidth || 600;
-    const cssH = 160;
+    const cssH = 170;
     canvas.width = Math.floor(cssW * dpr);
     canvas.height = Math.floor(cssH * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
-    ctx.fillStyle = "#121820";
-    ctx.fillRect(0, 0, cssW, cssH);
+
+    // subtle grid
+    ctx.strokeStyle = "#1a2733";
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const y = (cssH / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(cssW, y);
+      ctx.stroke();
+    }
+
     if (chartPoints.length < 2) return;
 
     let maxY = 1;
@@ -175,28 +290,49 @@
       if (p.y > maxY) maxY = p.y;
       if (p.x > maxX) maxX = p.x;
     }
-    const pad = 28;
-    const mapX = (x) => pad + (x / maxX) * (cssW - pad - 8);
-    const mapY = (y) => cssH - pad - (y / maxY) * (cssH - pad * 2);
+    maxY *= 1.15;
+    const padL = 8;
+    const padR = 8;
+    const padT = 12;
+    const padB = 22;
+    const mapX = (x) => padL + (x / maxX) * (cssW - padL - padR);
+    const mapY = (y) => padT + (1 - y / maxY) * (cssH - padT - padB);
 
-    ctx.strokeStyle = "#243041";
-    ctx.beginPath();
-    ctx.moveTo(pad, pad);
-    ctx.lineTo(pad, cssH - pad);
-    ctx.lineTo(cssW - 8, cssH - pad);
-    ctx.stroke();
+    // area fill under last color segments
+    for (let i = 1; i < chartPoints.length; i++) {
+      const a = chartPoints[i - 1];
+      const b = chartPoints[i];
+      const color = b.color || a.color || "#2ee6c5";
+      ctx.beginPath();
+      ctx.moveTo(mapX(a.x), mapY(a.y));
+      ctx.lineTo(mapX(b.x), mapY(b.y));
+      ctx.lineTo(mapX(b.x), cssH - padB);
+      ctx.lineTo(mapX(a.x), cssH - padB);
+      ctx.closePath();
+      ctx.fillStyle = color + "22";
+      ctx.fill();
+    }
 
-    // Phase-colored segments
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.25;
     for (let i = 1; i < chartPoints.length; i++) {
       const a = chartPoints[i - 1];
       const b = chartPoints[i];
       ctx.beginPath();
-      ctx.strokeStyle = b.color || a.color || "#3dd6c6";
+      ctx.strokeStyle = b.color || a.color || "#2ee6c5";
       ctx.moveTo(mapX(a.x), mapY(a.y));
       ctx.lineTo(mapX(b.x), mapY(b.y));
       ctx.stroke();
     }
+
+    // latest point pulse
+    const last = chartPoints[chartPoints.length - 1];
+    ctx.beginPath();
+    ctx.fillStyle = last.color || "#2ee6c5";
+    ctx.shadowColor = last.color || "#2ee6c5";
+    ctx.shadowBlur = 10;
+    ctx.arc(mapX(last.x), mapY(last.y), 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
   }
 
   function addChartPoint(tSec, ms, color) {
@@ -206,7 +342,42 @@
 
   function resetChart() {
     chartPoints = [];
+    gaugeLatency = 0;
+    gaugeSpeed = 0;
+    updateGauges(0, 0);
     drawChart();
+  }
+
+  function gradeClass(g) {
+    if (g === "A+") return "grade-A-plus";
+    if (g === "A") return "grade-A";
+    if (g === "B") return "grade-B";
+    if (g === "C") return "grade-C";
+    if (g === "D") return "grade-D";
+    if (g === "F") return "grade-F";
+    return "";
+  }
+
+  function gradeCaption(g) {
+    const map = {
+      "A+": "Excellent — queues stay tiny under load",
+      A: "Great — mild delay under load",
+      B: "OK — noticeable but usable",
+      C: "Fair — calls/games will stutter",
+      D: "Poor — heavy bloat under load",
+      F: "Bad — latency collapses when busy",
+    };
+    return map[g] || "Incomplete sample";
+  }
+
+  function bloatWidth(incMs) {
+    if (!(incMs >= 0) || Number.isNaN(incMs)) return 0;
+    return Math.min(100, (incMs / 400) * 100);
+  }
+
+  function parseMbps(text) {
+    const m = /([\d.]+)\s*Mbps/.exec(text || "");
+    return m ? parseFloat(m[1]) : NaN;
   }
 
   async function beginTest(sessionId) {
@@ -336,8 +507,8 @@
     return () => controllers.forEach((c) => c.abort());
   }
 
-  async function runPhase(name, meta, samples, t0, bytesRef, loadFn) {
-    el.phase.textContent = meta.name;
+  async function runPhase(key, meta, samples, t0, bytesRef, loadFn) {
+    setPhaseUI(key, meta);
     el.status.textContent = meta.name + "…";
     let stopLoad = null;
     if (loadFn) stopLoad = loadFn(bytesRef);
@@ -349,14 +520,18 @@
         samples.push(ms);
         el.liveLatency.textContent = fmtMs(ms);
         addChartPoint((performance.now() - t0) / 1000, ms, meta.color);
+        let mbps = NaN;
+        if (bytesRef) {
+          const elapsed = performance.now() - (bytesRef.tStart || t0);
+          const text = fmtMbps(bytesRef.value, elapsed);
+          el.liveThroughput.textContent = text;
+          mbps = parseMbps(text);
+        } else {
+          el.liveThroughput.textContent = "—";
+        }
+        updateGauges(ms, mbps);
       } catch (_) {
         pingFailures += 1;
-      }
-      if (bytesRef) {
-        const elapsed = performance.now() - (bytesRef.tStart || t0);
-        el.liveThroughput.textContent = fmtMbps(bytesRef.value, elapsed);
-      } else {
-        el.liveThroughput.textContent = "—";
       }
       await new Promise((r) => setTimeout(r, PING_EVERY_MS));
     }
@@ -378,6 +553,14 @@
     el.gradeOverall.textContent = gAll;
     el.gradeDown.textContent = gDown;
     el.gradeUp.textContent = gUp;
+    if (el.gradeCaption) el.gradeCaption.textContent = gradeCaption(gAll);
+    if (el.gradeOverallCard) {
+      el.gradeOverallCard.className = "medal " + gradeClass(gAll);
+    }
+    if (el.bloatDown) el.bloatDown.style.width = bloatWidth(downInc) + "%";
+    if (el.bloatUp) el.bloatUp.style.width = bloatWidth(upInc) + "%";
+    if (el.bloatDownLabel) el.bloatDownLabel.textContent = "bloat +" + fmtMs(downInc);
+    if (el.bloatUpLabel) el.bloatUpLabel.textContent = "bloat +" + fmtMs(upInc);
 
     const rows = [
       ["Idle p50", fmtMs(percentile(idleSorted, 50))],
@@ -412,9 +595,12 @@
   async function runTest() {
     pingFailures = 0;
     el.start.disabled = true;
+    if (el.startLabel) el.startLabel.textContent = "Running";
+    if (el.heroStage) el.heroStage.classList.add("is-running");
     el.results.hidden = true;
     el.live.hidden = false;
     resetChart();
+    setPhaseUI("baseline", PHASE.baseline);
 
     sessionId = uuid();
     try {
@@ -423,6 +609,8 @@
       el.status.textContent =
         e.code === 409 ? "Busy — another test is running. Try again shortly." : "Failed to start: " + e.message;
       el.start.disabled = false;
+      if (el.startLabel) el.startLabel.textContent = "Start test";
+      if (el.heroStage) el.heroStage.classList.remove("is-running");
       sessionId = null;
       return;
     }
@@ -447,8 +635,9 @@
       await runPhase("upload", PHASE.upload, up, t0, upBytes, startUploadLoad);
       upMs = performance.now() - upBytes.tStart;
 
-      el.phase.textContent = PHASE.cooldown.name;
+      setPhaseUI("cooldown", PHASE.cooldown);
       el.status.textContent = "Computing results…";
+      if (el.phaseBar) el.phaseBar.style.width = "100%";
       await new Promise((r) => setTimeout(r, PHASE.cooldown.durationMs));
 
       renderResults(idle, down, up, downBytes.value, downMs, upBytes.value, upMs);
@@ -473,9 +662,12 @@
       await endTest(sessionId);
       sessionId = null;
       el.start.disabled = false;
+      if (el.startLabel) el.startLabel.textContent = "Start test";
+      if (el.heroStage) el.heroStage.classList.remove("is-running");
     }
   }
 
   el.start.addEventListener("click", runTest);
+  updateGauges(0, 0);
   loadConfig();
 })();
