@@ -205,6 +205,7 @@ func runOnce(ctx context.Context, client *http.Client, baseURL string, downStrea
 	}
 
 	result := map[string]any{
+		"jitter_method":          "rtt-ewma-1/16",
 		"idle_p50_ms":            round1(idleP50),
 		"idle_p95_ms":            round1(metrics.Percentile(idle.samples, 95)),
 		"warmup_streams":         bestStreams,
@@ -260,7 +261,7 @@ func printResult(result map[string]any) {
 		}
 	}
 	for _, direction := range []string{"download", "upload", "bidir"} {
-		fmt.Printf("%s: +%.1f ms @ %.1f Mbps · loss %.1f%% · jitter %.1f · RPM %.0f\n", direction, result[direction+"_inc_ms"], result[direction+"_mbps"], result[direction+"_loss_pct"], result[direction+"_jitter_ms"], result[direction+"_rpm"])
+		fmt.Printf("%s: +%.1f ms @ %.1f Mbps · loss %.1f%% · smoothed RTT jitter %.1f ms · RPM %.0f\n", direction, result[direction+"_inc_ms"], result[direction+"_mbps"], result[direction+"_loss_pct"], result[direction+"_jitter_ms"], result[direction+"_rpm"])
 	}
 	fmt.Printf("Both directions: down %.1f Mbps / up %.1f Mbps\n", result["bidir_download_mbps"], result["bidir_upload_mbps"])
 	if math.IsNaN(result["recovery_ms"].(float64)) {

@@ -47,8 +47,8 @@ func TestJitterAndLoss(t *testing.T) {
 		t.Fatal("loss")
 	}
 	j := JitterMs([]float64{10, 12, 11, 15})
-	// |2|+|1|+|4| / 3 = 7/3
-	if math.Abs(j-7.0/3.0) > 0.01 {
+	// Starting at zero: 0.125, 0.1796875, then 0.41845703125.
+	if math.Abs(j-0.41845703125) > 1e-12 {
 		t.Fatalf("jitter=%v", j)
 	}
 }
@@ -83,5 +83,26 @@ func TestRecoveryFailuresBreakStreak(t *testing.T) {
 	times = append(times, 1000, 1200)
 	if got := RecoveryMsStable(samples, times, 10, 5, 3); got != 1200 {
 		t.Fatalf("recovery=%v", got)
+	}
+}
+
+func TestSmoothedJitter(t *testing.T) {
+	for _, samples := range [][]float64{nil, {10}} {
+		if !math.IsNaN(JitterMs(samples)) {
+			t.Fatal("insufficient samples should be unavailable")
+		}
+	}
+	for _, tc := range []struct {
+		samples []float64
+		want    float64
+	}{
+		{[]float64{10, 10, 10}, 0},
+		{[]float64{10, 26}, 1},
+		{[]float64{26, 10}, 1},
+		{[]float64{10, 26, 26}, 0.9375},
+	} {
+		if got := JitterMs(tc.samples); got != tc.want {
+			t.Fatalf("%v: got %v want %v", tc.samples, got, tc.want)
+		}
 	}
 }

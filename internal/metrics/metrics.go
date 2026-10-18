@@ -101,21 +101,17 @@ func LossPercent(failed, total int) float64 {
 	return float64(failed) / float64(total) * 100
 }
 
-// JitterMs is mean |ΔRTT| between consecutive successful probes (variability metric,
-// not VoIP RFC 3550 interarrival jitter).
+// JitterMs applies RFC 3550's 1/16 smoothing to consecutive successful RTT differences.
+// This is smoothed RTT variability, not RTP interarrival jitter. Each phase starts at zero.
 func JitterMs(samples []float64) float64 {
 	if len(samples) < 2 {
 		return math.NaN()
 	}
-	var sum float64
+	var jitter float64
 	for i := 1; i < len(samples); i++ {
-		d := samples[i] - samples[i-1]
-		if d < 0 {
-			d = -d
-		}
-		sum += d
+		jitter += (math.Abs(samples[i]-samples[i-1]) - jitter) / 16
 	}
-	return sum / float64(len(samples)-1)
+	return jitter
 }
 
 // RPM approximates successful probes per minute over durationSec.

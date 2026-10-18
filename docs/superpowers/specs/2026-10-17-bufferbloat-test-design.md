@@ -106,7 +106,7 @@ Load without session → **403**.
 | Increase | loaded p90 − idle p5; &lt; 2 ms → 0 |
 | Grade | A+…F from increase (same thresholds as LibreQoS Bufferbloat-Test) |
 | Probe loss | Failed HTTP `/ping` **transport** only (not ICMP; not slow replies) |
-| Jitter | Mean \|ΔRTT\| on successful probes (per phase; not concatenated) |
+| Smoothed RTT jitter | 1/16 EWMA of absolute RTT differences; reset to zero per phase (not RTP interarrival jitter) |
 | RPM (SLA) | Successful probes/min finishing within `max(80 ms, 3× idle p50)`; slow OK replies lower RPM only |
 | Recovery | Elapsed ms until 3 consecutive samples ≤ idle p50 + 5 ms (timestamped) |
 
@@ -216,3 +216,10 @@ custom-bufferbloat/
   separate `download_advisory` and `upload_advisory` strings; CLI output uses speed notes.
 - Stream caps are five download, three upload, and five total bidirectional. Both
   clients choose upload chunks independently of download chunks.
+
+### Smoothed RTT jitter
+
+Browser and CLI apply `J += (|RTT[i] - RTT[i-1]| - J) / 16`, initialized to zero
+per phase, to successful probes. This adopts RFC 3550's smoothing, not its RTP
+interarrival measurement. Exports identify the estimator with `jitter_method: "rtt-ewma-1/16"`; legacy runs retain their original mean absolute differences.
+The final estimator is reported, and grading is unaffected.

@@ -268,7 +268,13 @@ measurements and the limits of applying them to router/Wi-Fi throughput.
 - Grades use LibreQoS-style **loaded p90 − idle p5** (noise floor 2 ms); **overall = worse of download / upload / bidirectional**.
 - **Probe loss** = failed HTTP `/ping` transport only (timeouts/errors) — **not** raw packet loss and **not** slow replies.
 - **RPM (SLA)** ≈ probes/min that finish within `max(80 ms, 3× idle p50)`; slow-but-successful replies lower RPM, they do not inflate probe loss.
-- **Jitter** = mean |ΔRTT| on successful probes.
+- **Smoothed RTT jitter** uses `J += (|ΔRTT| - J) / 16`, starting at zero for each
+  phase, on consecutive successful probes. This uses [RFC 3550's smoothing rule](https://www.rfc-editor.org/rfc/rfc3550#section-6.4.1)
+  but measures HTTP RTT variability, not RTP interarrival jitter. It reports the final
+  estimator value, not the mean over the phase; short phases may not fully converge.
+  New exports include `jitter_method: "rtt-ewma-1/16"`. Older saved runs without that
+  field retain their mean absolute RTT differences and are not directly comparable.
+  Jitter does not affect grades.
 - **Recovery** = time until **3 consecutive** samples are ≤ idle p50 + 5 ms. Failed probes break the streak; timestamps include the gap between stopping load and starting recovery probes.
 - Each phase cancels its in-flight load and probe requests. Probes also have a five-second deadline; cancellation at a phase boundary is not counted as probe loss.
 - Upload throughput uses bytes **received by the server**, including partial requests, rather than only completed upload bodies. Clients allow up to two seconds after stopping uploads to read settled counters; failed accounting withholds the grade.

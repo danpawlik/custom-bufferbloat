@@ -111,3 +111,23 @@ test('independent live counters handle delayed upload samples without fake dips'
   assert.equal(upload, 100);
   assert.equal(up(37500000, 4000), 0); // Fresh unchanged counter means a real stall.
 });
+
+test('smoothed RTT jitter matches the Go estimator and decays after a spike', () => {
+  const { jitterMs } = require('./results.js');
+  assert.ok(Number.isNaN(jitterMs([])));
+  assert.ok(Number.isNaN(jitterMs([10])));
+  assert.equal(jitterMs([10, 10, 10]), 0);
+  assert.equal(jitterMs([10, 26]), 1);
+  assert.equal(jitterMs([26, 10]), 1);
+  assert.equal(jitterMs([10, 26, 26]), 0.9375);
+  assert.equal(jitterMs([10, 12, 11, 15]), 0.41845703125);
+});
+
+test('jitter method survives history and export without relabeling legacy results', () => {
+  const old = { version: 1, timestamp: '2026-10-18T00:00:00Z', label: 'old', overall_grade: 'A', download_jitter_ms: 2 };
+  const current = { ...old, label: 'new', jitter_method: 'rtt-ewma-1/16', download_jitter_ms: 0.4 };
+  const restored = readHistory(JSON.stringify([old, current]));
+  assert.equal(restored[0].jitter_method, undefined);
+  assert.equal(restored[1].jitter_method, 'rtt-ewma-1/16');
+  assert.match(csv(restored[1]), /rtt-ewma-1\/16/);
+});

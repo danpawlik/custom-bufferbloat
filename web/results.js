@@ -24,6 +24,15 @@
       return mbps;
     };
   }
+  // RFC 3550 smoothing applied to RTT differences, not RTP transit-time differences.
+  function jitterMs(samples) {
+    if (samples.length < 2) return NaN;
+    let jitter = 0;
+    for (let i = 1; i < samples.length; i++) {
+      jitter += (Math.abs(samples[i] - samples[i - 1]) - jitter) / 16;
+    }
+    return jitter;
+  }
   function quality(idle, loaded, down, up) {
     const reasons = [];
     if (idle.samples.length < 5 || loaded.samples.length < 5) reasons.push("fewer than 5 latency samples");
@@ -93,7 +102,7 @@
     }
     return summary;
   }
-  const api = { liveRate, fields, quality, recovery, csv, readHistory, calibrationStatus, saturationWarnings, summarize };
+  const api = { jitterMs, liveRate, fields, quality, recovery, csv, readHistory, calibrationStatus, saturationWarnings, summarize };
   if (typeof module !== "undefined") module.exports = api;
   else globalThis.TestResults = api;
 })();

@@ -166,13 +166,6 @@
     return delta < 2 ? 0 : delta;
   }
 
-  function jitterMs(samples) {
-    if (samples.length < 2) return NaN;
-    let sum = 0;
-    for (let i = 1; i < samples.length; i++) sum += Math.abs(samples[i] - samples[i - 1]);
-    return sum / (samples.length - 1);
-  }
-
   function lossPercent(failed, total) {
     if (!total) return NaN;
     return (failed / total) * 100;
@@ -596,7 +589,7 @@
 
   function updateLiveExtras(stats) {
     const loss = lossPercent(stats.failures, stats.attempts);
-    const jit = jitterMs(stats.samples);
+    const jit = TestResults.jitterMs(stats.samples);
     const rpmDur = Math.max(stats.durationMs, 500);
     const rpm = rpmFrom(stats.rpmSuccess, rpmDur);
     if (el.liveLoss) el.liveLoss.textContent = fmtPct(loss);
@@ -833,15 +826,15 @@
       ["Upload calibration", uploadWarmup.streams + "× · " + uploadWarmup.mbps.toFixed(1) + " Mbps · " + uploadWarmup.status],
       ["Down increase", fmtMs(downInc)],
       ["Down throughput", fmtMbps(downBytes, downMs)],
-      ["Down probe-loss / jitter", fmtPct(lossPercent(down.failures, down.attempts)) + " / " + fmtMs(jitterMs(down.samples))],
+      ["Down probe-loss / smoothed RTT jitter", fmtPct(lossPercent(down.failures, down.attempts)) + " / " + fmtMs(TestResults.jitterMs(down.samples))],
       ["Down RPM (SLA)", fmtRpm(rpmFrom(down.rpmSuccess, down.durationMs))],
       ["Up increase", fmtMs(upInc)],
       ["Up throughput", fmtMbps(upBytes, upMs)],
-      ["Up probe-loss / jitter", fmtPct(lossPercent(up.failures, up.attempts)) + " / " + fmtMs(jitterMs(up.samples))],
+      ["Up probe-loss / smoothed RTT jitter", fmtPct(lossPercent(up.failures, up.attempts)) + " / " + fmtMs(TestResults.jitterMs(up.samples))],
       ["Up RPM (SLA)", fmtRpm(rpmFrom(up.rpmSuccess, up.durationMs))],
       ["Both increase", fmtMs(biInc)],
       ["Both download / upload", fmtMbps(bi.downBytes, biMs) + " / " + fmtMbps(bi.upBytes, biMs)],
-      ["Both probe-loss / jitter", fmtPct(lossPercent(bi.failures, bi.attempts)) + " / " + fmtMs(jitterMs(bi.samples))],
+      ["Both probe-loss / smoothed RTT jitter", fmtPct(lossPercent(bi.failures, bi.attempts)) + " / " + fmtMs(TestResults.jitterMs(bi.samples))],
       ["Both RPM (SLA)", fmtRpm(rpmFrom(bi.rpmSuccess, bi.durationMs))],
       ["Loaded probe-loss", fmtPct(loadedLoss)],
       ["Loaded RPM (SLA)", fmtRpm(loadedRpm)],
@@ -863,6 +856,7 @@
     el.warning.textContent = warnings.join(" ");
     const result = {
       version: 1, timestamp: new Date().toISOString(), label: count > 1 ? settings.label.slice(0, 70) + " (" + (index + 1) + "/" + count + ")" : settings.label,
+      jitter_method: "rtt-ewma-1/16",
       series_id: seriesId, run_index: index + 1, requested_runs: count,
       expected_download_mbps: settings.expectedDown, expected_upload_mbps: settings.expectedUp,
       download_advisory: saturationDown.join(" "), upload_advisory: saturationUp.join(" "),
@@ -878,7 +872,7 @@
         [name + "_grade"]: grade, [name + "_inc_ms"]: inc,
         [name + "_mbps"]: (stats.downBytes + stats.upBytes) * 8 / stats.durationMs / 1000,
         [name + "_loss_pct"]: lossPercent(stats.failures, stats.attempts),
-        [name + "_jitter_ms"]: jitterMs(stats.samples),
+        [name + "_jitter_ms"]: TestResults.jitterMs(stats.samples),
         [name + "_rpm"]: rpmFrom(stats.rpmSuccess, stats.durationMs),
         [name + "_samples"]: stats.samples.length, [name + "_load_errors"]: stats.loadErrors,
       });
