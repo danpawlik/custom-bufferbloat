@@ -203,7 +203,8 @@ custom-bufferbloat/
   Summaries exclude runs with withheld overall grades and missing metric values. No
   letter grades are averaged. CLI repeat JSON uses the same summary statistics.
 - Download and upload each get up to three two-second calibration steps. Upload uses
-  independent streams/chunks starting at 64 KiB. Each upload measurement subtracts the
+  independent streams/chunks starting at 4 MiB and doubling up to 16 MiB.
+  Download chunks start at 8 MiB and double up to 32 MiB. Each upload measurement subtracts the
   initial server byte counter to exclude earlier phases in the same session.
 - A final step gaining more than 5% is rising, dropping more than 20% is unstable;
   otherwise positive, error-free steps establish a plateau. Invalid calibration is

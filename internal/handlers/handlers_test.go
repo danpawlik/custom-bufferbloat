@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -221,6 +223,61 @@ func TestStatsValidation(t *testing.T) {
 		s.Stats(rr, req)
 		if rr.Code != tc.want {
 			t.Fatalf("%s: %d want %d", tc.path, rr.Code, tc.want)
+		}
+	}
+}
+
+func TestDownloadReusedPayloadAndTail(t *testing.T) {
+	s := testServer()
+	beginSession(t, s, "payload")
+	const size = 2*chunkSize + 17
+	for i := 0; i < 2; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/download?size=%d", size), nil)
+		req.Header.Set("X-Session-Id", "payload")
+		s.Download(rr, req)
+		data := rr.Body.Bytes()
+		if rr.Code != http.StatusOK || len(data) != size {
+			t.Fatalf("status=%d bytes=%d", rr.Code, len(data))
+		}
+		if !bytes.Equal(data[:chunkSize], data[chunkSize:2*chunkSize]) || !bytes.Equal(data[:17], data[2*chunkSize:]) {
+			t.Fatal("payload or trailing bytes changed")
+		}
+		if !bytes.Equal(data[:chunkSize], s.downloadBuffer) {
+			t.Fatal("shared payload changed")
+		}
+	}
+}
+
+type interruptedDownload struct {
+	header http.Header
+	writes int
+	cancel context.CancelFunc
+	fail   bool
+}
+
+func (w *interruptedDownload) Header() http.Header { return w.header }
+func (w *interruptedDownload) WriteHeader(int)     {}
+func (w *interruptedDownload) Write(p []byte) (int, error) {
+	w.writes++
+	if w.fail {
+		return 0, io.ErrClosedPipe
+	}
+	w.cancel()
+	return len(p), nil
+}
+func TestDownloadStopsOnCancellationOrWriteError(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		s := testServer()
+		beginSession(t, s, "cancel")
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequest(http.MethodGet, "/download?size=33554432", nil).WithContext(ctx)
+		req.Header.Set("X-Session-Id", "cancel")
+		w := &interruptedDownload{header: make(http.Header), cancel: cancel, fail: fail}
+		s.Download(w, req)
+		cancel()
+		if w.writes != 1 {
+			t.Fatalf("fail=%v writes=%d; continued after cancellation/error", fail, w.writes)
 		}
 	}
 }

@@ -277,9 +277,9 @@ type calibration struct {
 }
 
 func calibrate(ctx context.Context, c *http.Client, base, id string, streams int, download bool) calibration {
-	chunk, maxStreams := 64<<10, 3
+	chunk, maxStreams := 4<<20, 3
 	if download {
-		chunk, maxStreams = 1<<20, 5
+		chunk, maxStreams = 8<<20, 5
 	}
 	streams = max(1, min(streams, maxStreams))
 	best := calibration{streams: streams, chunk: chunk, status: "unconfirmed"}
@@ -303,11 +303,7 @@ func calibrate(ctx context.Context, c *http.Client, base, id string, streams int
 			break
 		}
 		streams = min(maxStreams, streams+1)
-		if download {
-			chunk = min(4<<20, chunk+(512<<10))
-		} else {
-			chunk = min(2<<20, chunk*2)
-		}
+		chunk *= 2
 	}
 	if failed {
 		best.status = "unconfirmed"
@@ -515,12 +511,17 @@ func runLoadBi(parent context.Context, c *http.Client, base, sessionID string, d
 			return 0, 0, probeStats{loadErrors: 1, stoppedAt: time.Now()}
 		}
 	}
-	ctx, cancel := context.WithTimeout(parent, d)
-	defer cancel()
 	var downloaded, loadErrors atomic.Int64
 	var wg sync.WaitGroup
-	payload := make([]byte, uploadChunk)
-	_, _ = rand.Read(payload)
+	var payload []byte
+	if upStreams > 0 {
+		payload = make([]byte, uploadChunk)
+		if _, err := rand.Read(payload); err != nil {
+			return 0, 0, probeStats{loadErrors: 1, stoppedAt: time.Now()}
+		}
+	}
+	ctx, cancel := context.WithTimeout(parent, d)
+	defer cancel()
 	startWorkers := func(download bool, n int) {
 		for i := 0; i < n; i++ {
 			wg.Add(1)

@@ -16,7 +16,7 @@ const (
 	maxDownloadSize     = 64 << 20
 	maxUploadBytes      = 64 << 20
 	downloadTimeout     = 30 * time.Second
-	chunkSize           = 64 << 10
+	chunkSize           = 256 << 10
 	maxSessionJSON      = 4096
 )
 
@@ -26,6 +26,7 @@ type Server struct {
 	DownloadStreams int
 	UploadStreams   int
 	MaxConcurrent   int
+	downloadBuffer  []byte
 }
 
 func New(l *lock.TestLock, downloadStreams, uploadStreams, maxConcurrent int) *Server {
@@ -39,8 +40,14 @@ func New(l *lock.TestLock, downloadStreams, uploadStreams, maxConcurrent int) *S
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
 	}
+	// Reuse an immutable payload across requests to avoid allocation and random generation under load.
+	buf := make([]byte, chunkSize)
+	if _, err := rand.Read(buf); err != nil {
+		panic("generate download payload: " + err.Error())
+	}
 	return &Server{
 		Lock:            l,
+		downloadBuffer:  buf,
 		DownloadStreams: downloadStreams,
 		UploadStreams:   uploadStreams,
 		MaxConcurrent:   maxConcurrent,
@@ -124,11 +131,8 @@ func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	deadline := time.Now().Add(downloadTimeout)
-	buf := make([]byte, chunkSize)
-	_, _ = rand.Read(buf)
 
 	remaining := size
-	flusher, canFlush := w.(http.Flusher)
 	for remaining > 0 {
 		if err := ctx.Err(); err != nil {
 			return
@@ -140,11 +144,8 @@ func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
 		if n > remaining {
 			n = remaining
 		}
-		if _, err := w.Write(buf[:n]); err != nil {
+		if _, err := w.Write(s.downloadBuffer[:n]); err != nil {
 			return
-		}
-		if canFlush {
-			flusher.Flush()
 		}
 		remaining -= n
 	}

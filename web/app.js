@@ -53,8 +53,8 @@
   let chartPoints = [];
   let downloadStreams = 4;
   let uploadStreams = 2;
-  let chunkBytes = 2 * 1024 * 1024;
-  let uploadChunkBytes = 64 * 1024;
+  let chunkBytes = 8 * 1024 * 1024;
+  let uploadChunkBytes = 4 * 1024 * 1024;
   let abortControllers = [];
   let sessionId = null;
   let uploadBlob = null;
@@ -733,7 +733,7 @@
   async function runWarmup(t0, idleP50, download, initialStreams) {
     const name = download ? "Download calibration" : "Upload calibration";
     let streams = Math.max(1, Math.min(initialStreams, download ? 5 : 3));
-    let size = download ? 1024 * 1024 : 64 * 1024;
+    let size = (download ? 8 : 4) * 1024 * 1024;
     const best = { streams, chunk: size, mbps: 0, status: "unconfirmed" };
     const speeds = [];
     let failed = false;
@@ -751,7 +751,7 @@
       best.status = TestResults.calibrationStatus(speeds);
       if (best.status === "plateau") break;
       streams = Math.min(download ? 5 : 3, streams + 1);
-      size = download ? Math.min(4 * 1024 * 1024, size + 512 * 1024) : Math.min(2 * 1024 * 1024, size * 2);
+      size *= 2;
     }
     if (failed) best.status = "unconfirmed";
     return best;

@@ -213,12 +213,17 @@ go build -trimpath -ldflags="-s -w" -o bufferbloat-test-cli ./cmd/cli
 
 Stripped server binary is ~6 MiB (OK on modern OpenWrt boards; tight on tiny flash).
 
+See [load-generator benchmarks](docs/load-generator-benchmark.md) for reproducible local
+measurements and the limits of applying them to router/Wi-Fi throughput.
+
 ### Methodology notes
 
 - Latency samples use a **Web Worker** so main-thread download/upload work does not fake bufferbloat.
 - **Calibration** tunes download and upload separately, up to three two-second steps each.
-  Download starts at 1 MiB chunks; upload starts at 64 KiB, with its own selected stream
-  count and chunk size. Drains separate the two calibrations and the scored phases.
+  Download requests grow from 8 to 32 MiB; uploads grow from 4 to 16 MiB, with their own
+  selected stream counts and sizes. Larger requests reduce HTTP turnaround gaps; partial
+  transfers still count on slow links. The server reuses a random 256 KiB block and relies
+  on normal HTTP writes instead of explicitly flushing each block. Drains separate the two calibrations and the scored phases.
 - The last two successful calibration steps indicate a **plateau** when throughput changes
   by −20% to +5%. A larger increase is **rising**, a larger decrease is **unstable**, and
   missing/failed evidence is **unconfirmed**. These heuristic thresholds are shared by
