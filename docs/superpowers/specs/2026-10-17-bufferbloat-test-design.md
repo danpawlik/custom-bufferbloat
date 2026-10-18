@@ -52,7 +52,7 @@ Browser ──► GET  /                 (embedded UI)
          Go binary (VPS or OpenWrt)
 ```
 
-### Test flow (~40–60 s wall clock)
+### Test flow (~45–65 s wall clock)
 
 UI-driven phases (scored phases use warm-up-chosen streams/chunk):
 
@@ -192,3 +192,26 @@ custom-bufferbloat/
 - The browser stores the newest 20 labeled runs locally and supports JSON/CSV export,
   before/after comparisons, and clearing history. It stores no history on the server.
 - Regression checks: `go test -race ./...`, `go vet ./...`, `node --test web/*.test.js`.
+
+## Repeat mode and separate calibration
+
+- Repeat mode is opt-in (`-repeat` in the CLI): exactly three fresh sessions with a
+  cancellable 10-second cooldown between them. Completed runs survive a later failure
+  or cancellation. The server slot is released during cooldowns.
+- Browser history groups runs by `series_id`; group summaries and JSON export include
+  the available runs, completed/requested counts, and numeric median/min/max/spread/count.
+  Summaries exclude runs with withheld overall grades and missing metric values. No
+  letter grades are averaged. CLI repeat JSON uses the same summary statistics.
+- Download and upload each get up to three two-second calibration steps. Upload uses
+  independent streams/chunks starting at 64 KiB. Each upload measurement subtracts the
+  initial server byte counter to exclude earlier phases in the same session.
+- A final step gaining more than 5% is rising, dropping more than 20% is unstable;
+  otherwise positive, error-free steps establish a plateau. Invalid calibration is
+  unconfirmed. These are heuristics, not proof of WAN saturation.
+- Optional expected usable download/upload Mbps flag scored throughput below 80% of
+  the expectation. Non-plateau calibration or low expected-speed attainment produces advisory notes
+  beside the corresponding expected-speed fields. Grades remain based on valid latency
+  measurements, and these runs remain eligible for repeat summaries. Exports preserve
+  separate `download_advisory` and `upload_advisory` strings; CLI output uses speed notes.
+- Stream caps are five download, three upload, and five total bidirectional. Both
+  clients choose upload chunks independently of download chunks.

@@ -38,13 +38,36 @@ Then open in a browser:
 - same machine: [http://127.0.0.1:8080](http://127.0.0.1:8080)
 - another device on LAN: `http://<host-lan-ip>:8080`
 
-Click **Start test**. The run takes ~40–45 seconds:
+Click **Start test**. The run takes ~45–65 seconds:
 
-baseline → **warm-up** (find saturation) → download → upload → **bidirectional** → **recovery** → results
+baseline → **download and upload calibration** → download → upload → **bidirectional** → **recovery** → results
 
 (with **loss / jitter / RPM** reported per load phase).
 
-Use **Stop test** to cancel traffic and release the session. Interrupted runs are not saved.
+Use **Stop test** to cancel traffic and release the session. Interrupted runs are not saved;
+completed runs from a stopped repeat remain available. During **Both**, the throughput
+gauge splits into teal download and amber upload segments, with separate Mbps readings.
+
+Expand the optional **Test setup** panel to add a run label, expected speeds, or enable
+**Run three tests** for three independently calibrated tests, with a 10-second
+cooldown between runs (roughly 3 minutes total). Each run uses a fresh session and releases
+the server slot before the cooldown. If another client takes the slot, the sequence stops
+with a busy message and keeps its completed runs. Repeat mode uses roughly three times
+the data; Stop also works during cooldowns.
+
+The **Consistency across tests** section shows median, min, max, and spread (`max - min`) for latency,
+throughput, probe loss, and recovery. Only runs with a valid overall grade contribute;
+unavailable metrics are excluded rather than counted as zero. The sample count is shown
+for each metric. Select a saved repeat run to reopen its group; **Export all tests · JSON** includes individual runs and the summary. History still keeps only the latest
+20 runs, so old groups may become partial.
+
+Optional **Expected download/upload** speeds are in Mbps. Use expected usable throughput
+for this path (including an SQM shaping limit), rather than assuming the ISP's advertised
+rate is reachable over Wi-Fi. A scored speed below 80% of the entered value produces a
+speed note beside the matching expected-speed field. Grades and repeat summaries remain
+available; calibration and expected-speed comparisons are advisory.
+Leave these fields blank to disable the expected-speed comparison.
+
 Give runs a label such as **SQM off** or **SQM on**. The browser keeps the last 20
 completed runs locally, including any quality warnings. Select **Before** and **After**
 to compare latency, speed, probe loss, and recovery. Export the selected **After** run
@@ -53,9 +76,10 @@ on the server. Keep the same client, server, and connection when comparing runs.
 
 Bidirectional results show download and upload speeds separately. A **—** grade means
 insufficient evidence: fewer than five successful baseline/phase samples, failed load
-requests/accounting, or no transferred bytes in a required direction. Hiding the browser
-tab during a run also withholds grades. These checks catch incomplete tests; they do
-not prove that the ISP link was saturated or rule out a client/server CPU bottleneck.
+requests/accounting, or no transferred bytes in a required direction.
+Hiding the browser tab during a run also withholds grades. These checks catch incomplete
+tests; even a throughput plateau does not prove that the ISP link was saturated or rule
+out a client/server CPU bottleneck.
 
 Health check:
 
@@ -87,15 +111,22 @@ Start the server first (step 1 or 2), then:
 ```bash
 go run ./cmd/cli -url http://127.0.0.1:8080
 go run ./cmd/cli -url http://127.0.0.1:8080 -json
+# Three tests, 10-second cooldowns, optional expected usable Mbps:
+go run ./cmd/cli -url http://127.0.0.1:8080 -repeat -expected-download 500 -expected-upload 50 -json
 # or after: go build -o bufferbloat-test-cli ./cmd/cli
 ./bufferbloat-test-cli -url http://192.168.1.1:8080 -json
 ```
 
-The CLI talks to the same HTTP API as the browser (~40–60 s, including warm-up / drains / bidir / recovery).
+The CLI talks to the same HTTP API as the browser (~45–65 s, including warm-up / drains / bidir / recovery).
 Ctrl+C or SIGTERM cancels requests and attempts session release with a separate two-second
 timeout. JSON includes `quality_warnings`, `bidir_download_mbps`, and `bidir_upload_mbps`;
 unavailable numeric values are `null`. Output errors and interrupted runs exit nonzero.
 The CLI requires a server that provides `/test/stats` for upload byte accounting.
+`-repeat` JSON returns `{requested_runs, completed_runs, runs, summary}`; single-run JSON
+keeps the existing flat format. Each summary metric has `count`, `median`, `min`, `max`,
+and `spread`. If interrupted after a completed run, repeat mode writes the partial report
+and exits nonzero. Expected speeds default to `0` (disabled) and must be finite/nonnegative.
+Starting stream counts are bounded to 1–5 download and 1–3 upload.
 
 ### 4. OpenWrt
 
@@ -185,7 +216,19 @@ Stripped server binary is ~6 MiB (OK on modern OpenWrt boards; tight on tiny f
 ### Methodology notes
 
 - Latency samples use a **Web Worker** so main-thread download/upload work does not fake bufferbloat.
-- **Warm-up** raises parallel streams / chunk size until throughput plateaus; a short **drain** follows so leftover queues do not inflate scored grades.
+- **Calibration** tunes download and upload separately, up to three two-second steps each.
+  Download starts at 1 MiB chunks; upload starts at 64 KiB, with its own selected stream
+  count and chunk size. Drains separate the two calibrations and the scored phases.
+- The last two successful calibration steps indicate a **plateau** when throughput changes
+  by −20% to +5%. A larger increase is **rising**, a larger decrease is **unstable**, and
+  missing/failed evidence is **unconfirmed**. These heuristic thresholds are shared by
+  the browser and CLI. Calibration notes appear beside the expected-speed fields and never suppress grades.
+  JSON/CSV exports preserve these as `download_advisory` and `upload_advisory`; the CLI
+  prints them as speed notes. A plateau may still reflect a
+  client/server bottleneck rather than the ISP link.
+- Upload byte counters are sampled before and after every phase, so calibration traffic
+  is never added to scored upload throughput. Download caps at five streams and upload
+  at three; bidirectional load uses at most five total to leave room for HTTP probes.
 - Grades use LibreQoS-style **loaded p90 − idle p5** (noise floor 2 ms); **overall = worse of download / upload / bidirectional**.
 - **Probe loss** = failed HTTP `/ping` transport only (timeouts/errors) — **not** raw packet loss and **not** slow replies.
 - **RPM (SLA)** ≈ probes/min that finish within `max(80 ms, 3× idle p50)`; slow-but-successful replies lower RPM, they do not inflate probe loss.
@@ -193,7 +236,7 @@ Stripped server binary is ~6 MiB (OK on modern OpenWrt boards; tight on tiny f
 - **Recovery** = time until **3 consecutive** samples are ≤ idle p50 + 5 ms. Failed probes break the streak; timestamps include the gap between stopping load and starting recovery probes.
 - Each phase cancels its in-flight load and probe requests. Probes also have a five-second deadline; cancellation at a phase boundary is not counted as probe loss.
 - Upload throughput uses bytes **received by the server**, including partial requests, rather than only completed upload bodies. Clients allow up to two seconds after stopping uploads to read settled counters; failed accounting withholds the grade.
-- Grades require at least five successful baseline and phase samples plus nonzero traffic in each requested direction and no load errors. Probe loss remains separate and is shown in quality warnings.
+- Grades require at least five successful baseline and phase samples plus nonzero traffic in each requested direction, and no load errors. Probe loss remains separate and is shown in quality warnings.
 - Short drains also sit between down→up and up→bidir.
 - Browser connection limits (~6 per host) → warm-up caps streams; upload stays lower (client CPU).
 - Load endpoints require an active `/test/begin` session (`X-Session-Id`).

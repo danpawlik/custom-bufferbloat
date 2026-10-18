@@ -23,17 +23,54 @@
       </div>
       <h1>Bufferbloat<br /><span class="title-accent">Test</span></h1>
       <p class="lede">
-        Warm-up to saturate the link, then download, upload, and bidirectional load
+        Measure latency during download, upload, and bidirectional load
         with loss / jitter / responsiveness (RPM), plus recovery after the load stops.
       </p>
 
-      <label for="runLabel">Run label</label>
-      <input id="runLabel" maxlength="80" placeholder="e.g. SQM off / SQM on" />
+      <details class="test-setup">
+        <summary>
+          <span class="setup-title">Test setup <span class="optional">Optional</span></span>
+          <span id="durationHint" class="setup-estimate">About 1 minute</span>
+        </summary>
+        <p class="field-help">Labels, repeat tests, and expected speed comparisons.</p>
+        <div class="setup-row">
+          <div class="setup-field">
+            <label for="runLabel">Run label <span class="optional">Optional</span></label>
+            <input id="runLabel" maxlength="80" placeholder="e.g. SQM on" aria-describedby="labelHelp" />
+            <p id="labelHelp" class="field-help">Give this setup a name to find it in saved runs.</p>
+          </div>
+          <label class="repeat-option" for="repeatRuns">
+            <input id="repeatRuns" type="checkbox" aria-describedby="repeatHelp" />
+            <span><strong>Run three tests</strong><span id="repeatHelp">Compare consistency, with a 10-second break between tests.</span></span>
+          </label>
+        </div>
+        <fieldset class="expected-speeds">
+          <legend>Expected speeds <span class="optional">Optional</span></legend>
+          <p id="expectedHelp" class="field-help">Enter Mbps using your usual speed or SQM limit. These comparisons add context; grades use the latency measured during the test.</p>
+          <div class="speed-fields">
+            <div class="setup-field">
+              <label for="expectedDownload">Expected download</label>
+              <div class="input-unit"><input id="expectedDownload" type="number" min="0.01" step="any" placeholder="e.g. 500" aria-describedby="expectedHelp downloadFeedback" /><span aria-hidden="true">Mbps</span></div>
+              <p id="downloadFeedback" class="field-feedback" role="status" hidden></p>
+            </div>
+            <div class="setup-field">
+              <label for="expectedUpload">Expected upload</label>
+              <div class="input-unit"><input id="expectedUpload" type="number" min="0.01" step="any" placeholder="e.g. 50" aria-describedby="expectedHelp uploadFeedback" /><span aria-hidden="true">Mbps</span></div>
+              <p id="uploadFeedback" class="field-feedback" role="status" hidden></p>
+            </div>
+          </div>
+        </fieldset>
+        <p id="testCost" class="field-help">Tests use your connection at full speed. Keep this tab visible.</p>
+      </details>
       <div class="hero-actions" id="heroStage">
         <button id="startBtn" type="button" class="start-btn">
           <span class="start-label">Start test</span>
         </button>
         <button id="stopBtn" type="button" hidden>Stop test</button>
+      </div>
+      <div id="repeatProgressPanel" class="repeat-progress" hidden>
+        <label for="repeatProgress" id="repeatProgressLabel">0 of 3 tests completed</label>
+        <progress id="repeatProgress" max="3" value="0"></progress>
       </div>
       <p id="status" class="status" aria-live="polite">Ready — wired Ethernet recommended</p>
     </header>
@@ -62,6 +99,10 @@
           <div class="gauge-readout">
             <span class="label">Throughput</span>
             <span id="liveThroughput" class="value">—</span>
+            <div id="throughputDirections" class="throughput-directions" hidden>
+              <span class="throughput-down">↓ Download <strong id="liveDownload">—</strong></span>
+              <span class="throughput-up">↑ Upload <strong id="liveUpload">—</strong></span>
+            </div>
           </div>
         </div>
         <div class="phase-card">
@@ -131,6 +172,16 @@
       <p id="warning" class="warning" hidden></p>
     </section>
 
+    <section id="repeatSummary" class="history" aria-labelledby="repeatTitle" hidden>
+      <div class="section-heading">
+        <h2 id="repeatTitle">Consistency across tests</h2>
+        <button id="exportRepeat" type="button">Export all tests · JSON</button>
+      </div>
+      <p id="repeatStatus" aria-live="polite"></p>
+      <p class="field-help">Median is the middle result. Spread is the difference between the highest and lowest. Incomplete measurements are excluded.</p>
+      <div id="repeatTable" class="table-scroll"></div>
+    </section>
+
     <section class="history" aria-labelledby="historyTitle">
       <h2 id="historyTitle">Saved runs</h2>
       <p>Last 20 completed runs, stored in this browser. Compare the same server and test setup.</p>
@@ -138,8 +189,11 @@
       <div class="history-controls">
         <label>Before <select id="beforeRun" aria-label="Before run"></select></label>
         <label>After <select id="afterRun" aria-label="After run"></select></label>
-        <button id="exportJSON" type="button" disabled>Export after as JSON</button>
-        <button id="exportCSV" type="button" disabled>Export after as CSV</button>
+      </div>
+      <div class="history-actions">
+        <span class="field-help">Export the selected “After” run:</span>
+        <button id="exportJSON" type="button" aria-label="Export selected After run as JSON" disabled>JSON</button>
+        <button id="exportCSV" type="button" aria-label="Export selected After run as CSV" disabled>CSV</button>
         <button id="clearHistory" type="button">Clear saved runs</button>
       </div>
       <div id="comparison" class="table-scroll"></div>

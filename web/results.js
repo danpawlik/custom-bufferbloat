@@ -51,7 +51,35 @@
         .slice(-20);
     } catch (_) { return []; }
   }
-  const api = { fields, quality, recovery, csv, readHistory };
+  function calibrationStatus(speeds) {
+    if (speeds.length < 2 || speeds.some(s => !Number.isFinite(s) || s <= 0)) return "unconfirmed";
+    const previous = speeds[speeds.length - 2], last = speeds[speeds.length - 1];
+    if (last > previous * 1.05) return "rising";
+    if (last < previous * 0.8) return "unstable";
+    return "plateau";
+  }
+  function saturationWarnings(status, measured, expected) {
+    const warnings = [];
+    if (status === "rising") warnings.push("Speed was still increasing during calibration.");
+    else if (status === "unstable") warnings.push("Speed varied during calibration.");
+    else if (status !== "plateau") warnings.push("Calibration did not reach a steady speed.");
+    if (expected > 0 && measured < expected * 0.8) warnings.push("Measured speed was below 80% of your expected speed.");
+    return warnings;
+  }
+  function summarize(runs) {
+    const summary = {};
+    const valid = runs.filter(r => ["A+", "A", "B", "C", "D", "F"].includes(r.overall_grade));
+    for (const key of Object.keys(fields)) {
+      if (key === "overall_grade") continue;
+      const values = valid.map(r => r[key]).filter(Number.isFinite).sort((a, b) => a - b);
+      if (!values.length) continue;
+      const mid = Math.floor(values.length / 2);
+      const median = values.length % 2 ? values[mid] : values[mid - 1] / 2 + values[mid] / 2;
+      summary[key] = { count: values.length, median, min: values[0], max: values[values.length - 1], spread: values[values.length - 1] - values[0] };
+    }
+    return summary;
+  }
+  const api = { fields, quality, recovery, csv, readHistory, calibrationStatus, saturationWarnings, summarize };
   if (typeof module !== "undefined") module.exports = api;
   else globalThis.TestResults = api;
 })();

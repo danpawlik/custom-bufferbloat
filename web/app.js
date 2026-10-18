@@ -54,6 +54,7 @@
   let downloadStreams = 4;
   let uploadStreams = 2;
   let chunkBytes = 2 * 1024 * 1024;
+  let uploadChunkBytes = 64 * 1024;
   let abortControllers = [];
   let sessionId = null;
   let uploadBlob = null;
@@ -66,6 +67,10 @@
   let loadJobs = [];
   const stopButton = document.getElementById("stopBtn");
   const labelInput = document.getElementById("runLabel");
+  const repeatInput = document.getElementById("repeatRuns");
+  const expectedDownInput = document.getElementById("expectedDownload");
+  const expectedUpInput = document.getElementById("expectedUpload");
+  const runProgress = document.getElementById("repeatStatus");
   const historyKey = "bufferbloat-runs-v1";
   let history = [];
   try { history = TestResults.readHistory(localStorage.getItem(historyKey)); }
@@ -276,7 +281,7 @@
     return { slaOk, transportFail, total: n };
   }
 
-  function drawArcGauge(canvas, value, max, color, unit) {
+  function drawArcGauge(canvas, value, max, color, unit, downloadShare = null) {
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
     const cssW = 220;
@@ -304,6 +309,19 @@
     ctx.beginPath();
     ctx.arc(cx, cy, r, start, start + Math.PI * t);
     ctx.stroke();
+    if (downloadShare !== null && t > 0) {
+      ctx.lineCap = "butt";
+      const split = start + Math.PI * t * downloadShare;
+      ctx.strokeStyle = PHASE.download.color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, start, split);
+      ctx.stroke();
+      ctx.strokeStyle = PHASE.upload.color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, split, start + Math.PI * t);
+      ctx.stroke();
+      color = downloadShare < 1 ? PHASE.upload.color : PHASE.download.color;
+    }
     const ang = start + Math.PI * t;
     ctx.beginPath();
     ctx.fillStyle = color;
@@ -318,11 +336,11 @@
     ctx.fillText(unit, cx, cy - 8);
   }
 
-  function updateGauges(latencyMs, mbps) {
+  function updateGauges(latencyMs, mbps, direction = "download", downloadShare = null) {
     if (typeof latencyMs === "number" && !Number.isNaN(latencyMs)) gaugeLatency = latencyMs;
     if (typeof mbps === "number" && !Number.isNaN(mbps)) gaugeSpeed = mbps;
     drawArcGauge(el.latencyGauge, gaugeLatency, 200, "#5b9dff", "ms scale");
-    drawArcGauge(el.speedGauge, gaugeSpeed, Math.max(100, gaugeSpeed * 1.2), "#2ee6c5", "Mbps scale");
+    drawArcGauge(el.speedGauge, gaugeSpeed, Math.max(100, gaugeSpeed * 1.2), PHASE[direction].color, "Mbps scale", downloadShare);
   }
 
   function setPhaseUI(key, meta) {
@@ -621,6 +639,8 @@
     const idleP50 = opts.idleP50 || 20;
     const rpmBudget = Math.max(80, idleP50 * 3);
 
+    // Calibration and scored upload phases share a counter; measure only this phase's delta.
+    const uploadStart = opts.uploadPhase ? await uploadStats(opts.uploadPhase, true) : 0;
     const controller = new AbortController();
     let stoppedAt = 0;
     const abort = () => { stoppedAt = stoppedAt || performance.now(); controller.abort(); };
@@ -663,20 +683,26 @@
           totalPingFailures += 1;
         }
         if (opts.uploadPhase && performance.now() - lastStats > 1000) {
-          try { bytesRef.up = await uploadStats(opts.uploadPhase); }
+          try { bytesRef.up = await uploadStats(opts.uploadPhase) - uploadStart; }
           catch (_) { if (!runController.signal.aborted) bytesRef.errors += 1; }
           lastStats = performance.now();
         }
-        let mbps = NaN;
+        let mbps = 0;
+        const both = key === "bidir";
+        document.getElementById("throughputDirections").hidden = !both;
         if (bytesRef) {
           bytesRef.value = bytesRef.down + bytesRef.up;
           const text = fmtMbps(bytesRef.value, performance.now() - phaseStart);
           el.liveThroughput.textContent = text;
           mbps = parseMbps(text);
+          if (both) {
+            document.getElementById("liveDownload").textContent = fmtMbps(bytesRef.down, performance.now() - phaseStart);
+            document.getElementById("liveUpload").textContent = fmtMbps(bytesRef.up, performance.now() - phaseStart);
+          }
         } else el.liveThroughput.textContent = "—";
         stats.durationMs = performance.now() - phaseStart;
         updateLiveExtras(stats);
-        updateGauges(stats.samples[stats.samples.length - 1] || 0, mbps);
+        updateGauges(stats.samples[stats.samples.length - 1] || 0, mbps, opts.uploadPhase && !both ? "upload" : "download", both ? (bytesRef.value > 0 ? bytesRef.down / bytesRef.value : 0) : null);
         await delay(PING_EVERY_MS, signal).catch(() => {});
       }
     } finally {
@@ -692,7 +718,7 @@
     stats.observationMs = stoppedAt - (opts.sampleOrigin || phaseStart);
     if (runController.signal.aborted) throw abortError();
     if (opts.uploadPhase) {
-      try { bytesRef.up = await uploadStats(opts.uploadPhase, true); }
+      try { bytesRef.up = await uploadStats(opts.uploadPhase, true) - uploadStart; }
       catch (_) { bytesRef.errors += 1; }
     }
     if (bytesRef) {
@@ -704,53 +730,31 @@
     return stats;
   }
 
-  /** Adaptive warm-up: raise download streams until throughput plateaus. */
-  async function runWarmup(t0, idleP50) {
-    setPhaseUI("warmup", PHASE.warmup);
-    el.status.textContent = "Warm-up…";
-    let streams = Math.max(2, Math.min(downloadStreams, 4));
-    let size = 1 * 1024 * 1024;
-    let bestMbps = 0;
-    let bestStreams = streams;
-    let bestSize = size;
-    const steps = 3;
-    const stepMs = PHASE.warmup.durationMs / steps;
-    const samples = [];
-
-    for (let step = 0; step < steps; step++) {
-      const bytesRef = { value: 0, tStart: performance.now() };
-      const stats = await runPhase("warmup", PHASE.warmup, t0, {
-        durationMs: stepMs,
-        idleP50,
-        bytesRef,
-        loadFn: () => startDownloadLoad(bytesRef, streams, size),
+  async function runWarmup(t0, idleP50, download, initialStreams) {
+    const name = download ? "Download calibration" : "Upload calibration";
+    let streams = Math.max(1, Math.min(initialStreams, download ? 5 : 3));
+    let size = download ? 1024 * 1024 : 64 * 1024;
+    const best = { streams, chunk: size, mbps: 0, status: "unconfirmed" };
+    const speeds = [];
+    let failed = false;
+    for (let step = 0; step < 3; step++) {
+      const bytesRef = { value: 0 };
+      const stats = await runPhase("warmup", { ...PHASE.warmup, name }, t0, {
+        durationMs: 2000, idleP50, bytesRef,
+        uploadPhase: download ? null : "upload",
+        loadFn: () => download ? startDownloadLoad(bytesRef, streams, size) : startUploadLoad(bytesRef, streams, size, "upload"),
       });
-      for (const s of stats.samples) samples.push(s);
-      const mbps = parseMbps(fmtMbps(bytesRef.value, stats.durationMs));
-      el.status.textContent =
-        "Warm-up… " + streams + " streams · " + (Number.isNaN(mbps) ? "—" : mbps.toFixed(0) + " Mbps");
-      if (!Number.isNaN(mbps) && mbps > bestMbps * 1.05) {
-        bestMbps = mbps;
-        bestStreams = streams;
-        bestSize = size;
-        streams = Math.min(6, streams + 1);
-        size = Math.min(4 * 1024 * 1024, size + 512 * 1024);
-      } else {
-        break;
-      }
+      const mbps = stats.loadErrors ? NaN : bytesRef.value * 8 / stats.durationMs / 1000;
+      failed ||= stats.loadErrors > 0;
+      speeds.push(mbps);
+      if (mbps > best.mbps) Object.assign(best, { mbps, streams, chunk: size });
+      best.status = TestResults.calibrationStatus(speeds);
+      if (best.status === "plateau") break;
+      streams = Math.min(download ? 5 : 3, streams + 1);
+      size = download ? Math.min(4 * 1024 * 1024, size + 512 * 1024) : Math.min(2 * 1024 * 1024, size * 2);
     }
-
-    downloadStreams = bestStreams;
-    chunkBytes = bestSize;
-    uploadStreams = Math.max(1, Math.min(uploadStreams, Math.ceil(bestStreams / 2)));
-    uploadBlob = null;
-    return {
-      samples,
-      streams: bestStreams,
-      chunk: bestSize,
-      mbps: bestMbps,
-      uploadStreams,
-    };
+    if (failed) best.status = "unconfirmed";
+    return best;
   }
 
   function renderResults(ctx) {
@@ -766,7 +770,7 @@
       upMs,
       biBytes,
       biMs,
-      warmup,
+      warmup, uploadWarmup, settings, index, count, seriesId,
     } = ctx;
 
     const idleSorted = [...idle.samples].sort((a, b) => a - b);
@@ -776,6 +780,8 @@
     const upInc = increaseMs(idle.samples, up.samples);
     const biInc = increaseMs(idle.samples, bi.samples);
     const warnings = [...runWarnings];
+    const saturationDown = TestResults.saturationWarnings(warmup.status, down.downBytes * 8 / downMs / 1000, settings.expectedDown);
+    const saturationUp = TestResults.saturationWarnings(uploadWarmup.status, up.upBytes * 8 / upMs / 1000, settings.expectedUp);
     function checkedGrade(stats, downLoad, upLoad, inc, name) {
       const reasons = TestResults.quality(idle, stats, downLoad, upLoad);
       if (reasons.length) warnings.push(name + ": " + reasons.join("; ") + ". Grade withheld.");
@@ -813,7 +819,8 @@
 
     const rows = [
       ["Idle p50 / p95", fmtMs(idleP50) + " / " + fmtMs(percentile(idleSorted, 95))],
-      ["Warm-up", (warmup.streams || "—") + "× streams · " + (warmup.mbps ? warmup.mbps.toFixed(0) + " Mbps" : "—")],
+      ["Download calibration", warmup.streams + "× · " + warmup.mbps.toFixed(1) + " Mbps · " + warmup.status],
+      ["Upload calibration", uploadWarmup.streams + "× · " + uploadWarmup.mbps.toFixed(1) + " Mbps · " + uploadWarmup.status],
       ["Down increase", fmtMs(downInc)],
       ["Down throughput", fmtMbps(downBytes, downMs)],
       ["Down probe-loss / jitter", fmtPct(lossPercent(down.failures, down.attempts)) + " / " + fmtMs(jitterMs(down.samples))],
@@ -845,7 +852,13 @@
     el.warning.hidden = warnings.length === 0;
     el.warning.textContent = warnings.join(" ");
     const result = {
-      version: 1, timestamp: new Date().toISOString(), label: labelInput.value.trim().slice(0, 80) || "Untitled run",
+      version: 1, timestamp: new Date().toISOString(), label: count > 1 ? settings.label.slice(0, 70) + " (" + (index + 1) + "/" + count + ")" : settings.label,
+      series_id: seriesId, run_index: index + 1, requested_runs: count,
+      expected_download_mbps: settings.expectedDown, expected_upload_mbps: settings.expectedUp,
+      download_advisory: saturationDown.join(" "), upload_advisory: saturationUp.join(" "),
+      download_calibration: warmup.status, upload_calibration: uploadWarmup.status,
+      warmup_mbps: warmup.mbps, upload_warmup_mbps: uploadWarmup.mbps,
+      upload_warmup_streams: uploadWarmup.streams, upload_warmup_chunk: uploadWarmup.chunk,
       server: location.origin, overall_grade: gAll,
       idle_p50_ms: idleP50, recovery_ms: recUntil, quality_warnings: warnings,
       warmup_streams: warmup.streams, warmup_chunk: warmup.chunk,
@@ -862,12 +875,29 @@
     }
     result.bidir_download_mbps = bi.downBytes * 8 / biMs / 1000;
     result.bidir_upload_mbps = bi.upBytes * 8 / biMs / 1000;
+    showSpeedFeedback("download", result.download_mbps, settings.expectedDown, result.download_advisory);
+    showSpeedFeedback("upload", result.upload_mbps, settings.expectedUp, result.upload_advisory);
     // JSON turns unavailable numeric values into null for storage and export.
     history.push(JSON.parse(JSON.stringify(result)));
     history = history.slice(-20);
     try { localStorage.setItem(historyKey, JSON.stringify(history)); }
     catch (_) { document.getElementById("historyNotice").textContent = "Could not save runs in this browser. Export to keep this result."; }
     renderHistory();
+  }
+
+  function showSpeedFeedback(direction, measured, expected, advisory) {
+    const node = document.getElementById(direction + "Feedback");
+    const speed = Number.isFinite(measured) ? measured.toFixed(1) + " Mbps measured" : "Speed unavailable";
+    node.textContent = "Last test: " + speed + (expected > 0 ? " / " + expected + " Mbps expected." : ".") + (advisory ? " " + advisory : "");
+    node.classList.toggle("has-advisory", Boolean(advisory));
+    node.hidden = false;
+  }
+
+  function updateSetup() {
+    if (runController) return;
+    if (el.startLabel) el.startLabel.textContent = repeatInput.checked ? "Start 3 tests" : "Start test";
+    document.getElementById("durationHint").textContent = repeatInput.checked ? "About 3 minutes" : "About 1 minute";
+    document.getElementById("testCost").textContent = repeatInput.checked ? "Three tests use roughly three times the data. You can stop at any time; completed tests are kept." : "Tests use your connection at full speed. Keep this tab visible.";
   }
 
   function renderHistory() {
@@ -891,6 +921,7 @@
   }
 
   function renderComparison() {
+    renderRepeatSummary();
     const host = document.getElementById("comparison");
     host.replaceChildren();
     const before = history[document.getElementById("beforeRun").value];
@@ -917,37 +948,115 @@
       const delta = typeof a === "number" && typeof b === "number" ? (b - a).toFixed(1) : "—";
       addRow([label, display(a), display(b), delta]);
     }
+    for (const direction of ["download", "upload"]) {
+      if (before[direction + "_advisory"] || after[direction + "_advisory"]) addRow([direction === "download" ? "Download note" : "Upload note", before[direction + "_advisory"] || "None", after[direction + "_advisory"] || "None", "—"]);
+    }
     addRow(["Quality warnings", (before.quality_warnings || []).join("; ") || "None", (after.quality_warnings || []).join("; ") || "None", "—"]);
     host.append(table);
   }
 
-  function exportRun(format) {
-    const result = history[document.getElementById("afterRun").value];
-    if (!result) return;
+  function selectedSeries() {
+    const selected = history[document.getElementById("afterRun").value];
+    if (!selected?.series_id || selected.requested_runs !== 3) return null;
+    const runs = history.filter(r => r.series_id === selected.series_id);
+    return { requested_runs: 3, completed_runs: runs.length, runs, summary: TestResults.summarize(runs) };
+  }
+
+  function renderRepeatSummary() {
+    const report = selectedSeries();
+    document.getElementById("repeatSummary").hidden = !report;
+    const host = document.getElementById("repeatTable");
+    host.replaceChildren();
+    if (!report) return;
+    const included = report.runs.filter(r => r.overall_grade !== "—").length;
+    runProgress.textContent = report.completed_runs + " of 3 tests saved · " + included + " included in this summary." + (included === 1 ? " Complete another valid test to compare variation." : "");
+    if (!included) { host.textContent = "No valid runs to summarize. Individual measurements and warnings remain in saved runs."; return; }
+    const table = document.createElement("table");
+    const row = (values, header) => {
+      const tr = document.createElement("tr");
+      values.forEach((value, i) => {
+        const cell = document.createElement(header || i === 0 ? "th" : "td");
+        if (header || i === 0) cell.scope = header ? "col" : "row";
+        cell.textContent = value;
+        tr.append(cell);
+      });
+      table.append(tr);
+    };
+    row(["Metric", "Median", "Min", "Max", "Spread", "Tests"], true);
+    for (const [key, stats] of Object.entries(report.summary)) row([TestResults.fields[key], stats.median.toFixed(1), stats.min.toFixed(1), stats.max.toFixed(1), stats.spread.toFixed(1), stats.count], false);
+    host.append(table);
+  }
+
+  function downloadResult(result, format, name) {
     const blob = new Blob([format === "json" ? JSON.stringify(result, null, 2) : TestResults.csv(result)], { type: format === "json" ? "application/json" : "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "bufferbloat-" + result.timestamp.replace(/[^0-9T]/g, "-") + "." + format;
+    link.download = name + "." + format;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function exportRun(format) {
+    const result = history[document.getElementById("afterRun").value];
+    if (result) downloadResult(result, format, "bufferbloat-" + result.timestamp.replace(/[^0-9T]/g, "-"));
+  }
+
   async function runTest() {
     if (runController) return;
+    for (const input of [expectedDownInput, expectedUpInput]) {
+      if (!input.reportValidity()) return;
+      if (input.value && (!Number.isFinite(Number(input.value)) || Number(input.value) <= 0)) { el.status.textContent = "Expected speeds must be positive numbers or blank."; return; }
+    }
+    const settings = { label: labelInput.value.trim().slice(0, 80) || "Untitled run", expectedDown: Number(expectedDownInput.value), expectedUp: Number(expectedUpInput.value), downStreams: downloadStreams, upStreams: uploadStreams };
+    const count = repeatInput.checked ? 3 : 1;
+    const seriesId = count > 1 ? uuid() : "";
+    document.getElementById("repeatProgressPanel").hidden = count === 1;
+    document.getElementById("repeatProgress").value = 0;
+    document.getElementById("repeatProgressLabel").textContent = "0 of 3 tests completed";
     runController = new AbortController();
+    stopButton.hidden = false;
+    for (const input of [labelInput, repeatInput, expectedDownInput, expectedUpInput]) input.disabled = true;
+    el.start.disabled = true;
+    if (el.heroStage) el.heroStage.classList.add("is-running");
+    let completed = 0;
+    try {
+      for (let i = 0; i < count; i++) {
+        if (i > 0) {
+          el.live.hidden = true;
+          for (let seconds = 10; seconds > 0; seconds--) {
+            el.status.textContent = "Cooldown — " + seconds + " s before run " + (i + 1) + "/" + count;
+            await delay(1000, runController.signal);
+          }
+        }
+        if (runController.signal.aborted) throw abortError();
+        if (el.startLabel) el.startLabel.textContent = "Run " + (i + 1) + "/" + count;
+        await runSingle(settings, i, count, seriesId);
+        completed++;
+        document.getElementById("repeatProgress").value = completed;
+        document.getElementById("repeatProgressLabel").textContent = completed + " of " + count + " tests completed";
+      }
+      el.status.textContent = count > 1 ? "Done — 3/3 runs completed" : "Done";
+    } catch (e) {
+      el.status.textContent = runController.signal.aborted ? "Test stopped — " + completed + "/" + count + " completed runs saved." : e.code === 409 ? "Busy — another test is running. " + completed + " completed runs saved." : "Test failed: " + e.message + ". " + completed + " completed runs saved.";
+    } finally {
+      runController = null;
+      stopButton.hidden = true;
+      for (const input of [labelInput, repeatInput, expectedDownInput, expectedUpInput]) input.disabled = false;
+      el.start.disabled = false;
+      updateSetup();
+      if (el.heroStage) el.heroStage.classList.remove("is-running");
+    }
+  }
+
+  async function runSingle(settings, index, count, seriesId) {
     runWarnings = document.hidden ? ["Tab was hidden during this run. Grade withheld; repeat with the tab visible."] : [];
     totalPingFailures = 0;
-    stopButton.hidden = false;
-    labelInput.disabled = true;
+    for (const direction of ["download", "upload"]) document.getElementById(direction + "Feedback").hidden = true;
     el.warning.hidden = true;
-    el.start.disabled = true;
-    if (el.startLabel) el.startLabel.textContent = "Running";
-    if (el.heroStage) el.heroStage.classList.add("is-running");
     el.results.hidden = true;
     el.live.hidden = false;
     resetChart();
-
     sessionId = uuid();
     const t0 = performance.now();
     try {
@@ -956,7 +1065,12 @@
       const idle = await runPhase("baseline", PHASE.baseline, t0, { rpm: false });
       const idleP50 = percentile([...idle.samples].sort((a, b) => a - b), 50);
 
-      const warmup = await runWarmup(t0, idleP50);
+      const warmup = await runWarmup(t0, idleP50, true, settings.downStreams);
+      await runPhase("warmup", PHASE.drain, t0, { durationMs: 1000, idleP50, rpm: false, holdPhaseRail: true });
+      const uploadWarmup = await runWarmup(t0, idleP50, false, settings.upStreams);
+      chunkBytes = warmup.chunk;
+      uploadChunkBytes = uploadWarmup.chunk;
+      uploadBlob = null;
 
       // Drain queues before scored phases so warm-up does not inflate grades.
       await runPhase("warmup", PHASE.drain, t0, {
@@ -971,7 +1085,7 @@
         rpm: true,
         idleP50,
         bytesRef: downBytes,
-        loadFn: () => startDownloadLoad(downBytes, downloadStreams, chunkBytes),
+        loadFn: () => startDownloadLoad(downBytes, warmup.streams, chunkBytes),
       });
       const downMs = down.durationMs;
 
@@ -988,7 +1102,7 @@
         idleP50,
         bytesRef: upBytes,
         uploadPhase: "upload",
-        loadFn: () => startUploadLoad(upBytes, uploadStreams, chunkBytes, "upload"),
+        loadFn: () => startUploadLoad(upBytes, uploadWarmup.streams, uploadChunkBytes, "upload"),
       });
       const upMs = up.durationMs;
 
@@ -999,8 +1113,8 @@
         holdPhaseRail: true,
       });
 
-      const biDownStreams = Math.max(1, Math.ceil(downloadStreams / 2));
-      const biUpStreams = Math.max(1, Math.min(uploadStreams, biDownStreams));
+      const biDownStreams = Math.max(1, Math.ceil(warmup.streams / 2));
+      const biUpStreams = Math.max(1, Math.min(uploadWarmup.streams, 5 - biDownStreams));
       const biBytes = { value: 0, tStart: performance.now() };
       const bi = await runPhase("bidir", PHASE.bidir, t0, {
         rpm: true,
@@ -1009,7 +1123,7 @@
         uploadPhase: "bidir",
         loadFn: () => {
           startDownloadLoad(biBytes, biDownStreams, chunkBytes);
-          startUploadLoad(biBytes, biUpStreams, chunkBytes, "bidir");
+          startUploadLoad(biBytes, biUpStreams, uploadChunkBytes, "bidir");
         },
       });
       const biMs = bi.durationMs;
@@ -1041,28 +1155,22 @@
         upMs,
         biBytes: biBytes.value,
         biMs,
-        warmup,
+        warmup, uploadWarmup, settings, index, count, seriesId,
       });
-      el.status.textContent = "Done";
-    } catch (e) {
-      el.status.textContent = runController.signal.aborted ? "Test stopped — incomplete run was not saved." : e.code === 409 ? "Busy — another test is running. Try again shortly." : "Test failed: " + e.message;
-      el.warning.hidden = false;
-      el.warning.textContent = "Test ended early.";
     } finally {
       stopLoads();
       await Promise.allSettled(loadJobs);
       loadJobs = [];
       await endTest(sessionId);
       sessionId = null;
-      runController = null;
-      stopButton.hidden = true;
-      labelInput.disabled = false;
-      el.start.disabled = false;
-      if (el.startLabel) el.startLabel.textContent = "Start test";
-      if (el.heroStage) el.heroStage.classList.remove("is-running");
     }
   }
 
+  repeatInput.addEventListener("change", updateSetup);
+  for (const [input, direction] of [[expectedDownInput, "download"], [expectedUpInput, "upload"]]) {
+    input.addEventListener("input", () => { document.getElementById(direction + "Feedback").hidden = true; });
+  }
+  updateSetup();
   stopButton.addEventListener("click", () => { runController?.abort(); stopLoads(); });
   document.addEventListener("visibilitychange", () => {
     if (runController && document.hidden && !runWarnings.length) runWarnings.push("Tab was hidden during this run. Grade withheld; repeat with the tab visible.");
@@ -1074,6 +1182,10 @@
     navigator.sendBeacon("/test/end", new Blob([JSON.stringify({ sessionId })], { type: "application/json" }));
   });
   for (const id of ["beforeRun", "afterRun"]) document.getElementById(id).addEventListener("change", renderComparison);
+  document.getElementById("exportRepeat").addEventListener("click", () => {
+    const report = selectedSeries();
+    if (report) downloadResult(report, "json", "bufferbloat-repeat");
+  });
   document.getElementById("exportJSON").addEventListener("click", () => exportRun("json"));
   document.getElementById("exportCSV").addEventListener("click", () => exportRun("csv"));
   document.getElementById("clearHistory").addEventListener("click", () => {

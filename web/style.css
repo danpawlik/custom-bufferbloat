@@ -559,12 +559,67 @@ button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .5; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .history { margin-top: 2rem; }
-.history-controls { display: flex; gap: .75rem; flex-wrap: wrap; align-items: end; }
+.history-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
 .history-controls label { display: flex; flex-direction: column; gap: .3rem; }
-.history-controls select { max-width: min(100%, 26rem); }
+.history-controls select { width: 100%; min-width: 0; }
 .table-scroll { overflow-x: auto; margin-top: 1rem; }
 table { border-collapse: collapse; width: 100%; }
 th, td { padding: .5rem; text-align: left; border-bottom: 1px solid var(--line); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.test-setup {
+  margin-top: 1.5rem; padding: 1.25rem;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel);
+}
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; }
+.section-heading h2 { font-size: 1.2rem; margin: 0; }
+.setup-estimate { color: var(--accent); font-family: var(--mono); font-size: .8rem; }
+.setup-row, .speed-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; }
+.setup-row { margin-top: 1.2rem; align-items: start; }
+.setup-field { min-width: 0; }
+.setup-field > label { display: block; font-size: .9rem; font-weight: 600; margin-bottom: .5rem; }
+.setup-field input { width: 100%; min-width: 0; min-height: 44px; }
+.optional { margin-left: .4rem; font-size: .75rem; color: var(--muted); font-weight: 400; }
+.field-help { color: var(--muted); font-size: .8rem; line-height: 1.5; margin: .5rem 0 0; }
+.repeat-option {
+  display: flex; gap: .75rem; padding: 1rem; border: 1px solid var(--line);
+  border-radius: 10px; cursor: pointer; background: var(--panel-2);
+}
+.repeat-option:has(input:checked) { border-color: var(--accent); }
+.repeat-option input { width: 20px; height: 20px; flex: none; accent-color: var(--accent); margin: .1rem 0 0; }
+.repeat-option strong { display: block; font-size: .9rem; }
+.repeat-option span span { display: block; color: var(--muted); font-size: .8rem; line-height: 1.5; margin-top: .35rem; }
+.expected-speeds { border: 0; border-top: 1px solid var(--line); margin: 1.25rem 0 0; padding: 1rem 0 0; min-width: 0; }
+.expected-speeds legend { padding: 0 .5rem 0 0; font-size: .9rem; font-weight: 600; }
+.expected-speeds > .field-help { margin: 0 0 1rem; }
+.input-unit { position: relative; }
+.input-unit input { padding-right: 4.25rem; }
+.input-unit > span { position: absolute; right: 1.5rem; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: .75rem; pointer-events: none; }
+.field-feedback { color: var(--muted); font-size: .8rem; line-height: 1.5; margin: .65rem 0 0; }
+.field-feedback.has-advisory { color: var(--warn); border-left: 2px solid var(--warn); padding-left: .65rem; }
+#testCost { margin-top: 1rem; }
+.hero-actions { display: flex; align-items: center; gap: .75rem; }
+.repeat-progress { max-width: 28rem; margin: 1rem 0; font-size: .8rem; color: var(--muted); }
+.repeat-progress progress { display: block; width: 100%; height: 6px; margin-top: .5rem; accent-color: var(--accent); }
+.history { border-top: 1px solid var(--line); padding-top: 1.5rem; }
+.history-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-top: .85rem; }
+.history-actions .field-help { margin: 0 .25rem 0 0; }
+#clearHistory { margin-left: auto; }
+@media (max-width: 600px) {
+  .setup-row, .speed-fields, .history-controls { grid-template-columns: 1fr; }
+  .test-setup { padding: 1rem; }
+  .history-actions .field-help { flex-basis: 100%; }
+  #clearHistory { margin-left: 0; }
+  .section-heading { align-items: flex-start; }
+}
+
+.test-setup summary { cursor: pointer; }
+.setup-title { font-weight: 600; }
+.test-setup summary .setup-estimate { float: right; margin-left: .75rem; }
+.throughput-directions { margin-top: .5rem; font-size: .75rem; line-height: 1.6; }
+.throughput-directions span { display: block; }
+.throughput-directions strong { font-family: var(--mono); }
+.throughput-down { color: var(--down); }
+.throughput-up { color: var(--up); }
