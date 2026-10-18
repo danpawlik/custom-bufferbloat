@@ -61,6 +61,39 @@
   let pingSeq = 0;
   const pingWaiters = new Map();
   let totalPingFailures = 0;
+  let runController = null;
+  let runWarnings = [];
+  let loadJobs = [];
+  const stopButton = document.getElementById("stopBtn");
+  const labelInput = document.getElementById("runLabel");
+  const historyKey = "bufferbloat-runs-v1";
+  let history = [];
+  try { history = TestResults.readHistory(localStorage.getItem(historyKey)); }
+  catch (_) { document.getElementById("historyNotice").textContent = "Browser storage unavailable; export runs to keep them."; }
+
+  function abortError() { return new DOMException("Test stopped", "AbortError"); }
+  function delay(ms, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) { reject(abortError()); return; }
+      const done = () => { signal?.removeEventListener("abort", abort); resolve(); };
+      const timer = setTimeout(done, ms);
+      const abort = () => { clearTimeout(timer); signal.removeEventListener("abort", abort); reject(abortError()); };
+      signal?.addEventListener("abort", abort, { once: true });
+    });
+  }
+  async function request(url, options = {}, signal = runController?.signal, timeout = 5000) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(abort, timeout);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      if (!response.ok) { const error = new Error("HTTP " + response.status); error.code = response.status; throw error; }
+      return await response.json();
+    } finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }
+  }
+
 
   function ensurePingWorker() {
     if (pingWorker) return pingWorker;
@@ -75,7 +108,10 @@
         else waiter.reject(new Error("ping failed"));
       };
       pingWorker.onerror = () => {
+        const failed = pingWorker;
         pingWorker = null;
+        failed?.terminate();
+        for (const waiter of [...pingWaiters.values()]) waiter.reject(new Error("probe worker failed"));
       };
     } catch (_) {
       pingWorker = null;
@@ -185,42 +221,43 @@
     return h;
   }
 
-  async function pingOnceMain() {
+  async function pingOnceMain(signal, timeoutMs) {
     const t0 = performance.now();
-    const r = await fetch("/ping?t=" + t0, { cache: "no-store", headers: sessionHeaders() });
-    if (!r.ok) throw new Error("ping failed");
-    await r.arrayBuffer();
+    await request("/ping?t=" + t0, { cache: "no-store", headers: sessionHeaders() }, signal, timeoutMs);
     return performance.now() - t0;
   }
 
-  function pingOnce() {
+  function pingOnce(signal, timeoutMs = 5000) {
+    if (signal?.aborted) return Promise.reject(abortError());
     const worker = ensurePingWorker();
-    if (!worker) return pingOnceMain();
+    if (!worker) return pingOnceMain(signal, timeoutMs);
     const id = ++pingSeq;
     return new Promise((resolve, reject) => {
-      pingWaiters.set(id, { resolve, reject });
-      worker.postMessage({
-        id,
-        url: "/ping?t=" + performance.now(),
-        sessionId: sessionId,
-      });
-      setTimeout(() => {
-        if (pingWaiters.has(id)) {
-          pingWaiters.delete(id);
-          reject(new Error("ping timeout"));
-        }
-      }, 5000);
+      const finish = (error, ms) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
+        pingWaiters.delete(id);
+        if (error) reject(error); else resolve(ms);
+      };
+      const abort = () => {
+        worker.postMessage({ id, cancel: true });
+        finish(abortError());
+      };
+      const timer = setTimeout(abort, timeoutMs);
+      signal?.addEventListener("abort", abort, { once: true });
+      pingWaiters.set(id, { resolve: ms => finish(null, ms), reject: error => finish(error) });
+      worker.postMessage({ id, url: "/ping?t=" + performance.now(), sessionId, timeoutMs });
     });
   }
 
   /** Parallel small probes for RPM-style responsiveness under load. */
-  async function rpmBurst(n, budgetMs) {
+  async function rpmBurst(n, budgetMs, signal) {
     const jobs = [];
     for (let i = 0; i < n; i++) {
       jobs.push(
         (async () => {
           try {
-            const ms = await pingOnce();
+            const ms = await pingOnce(signal);
             return { transportOk: true, ms };
           } catch (_) {
             return { transportOk: false, ms: NaN };
@@ -423,27 +460,15 @@
   }
 
   async function beginTest(id) {
-    const r = await fetch("/test/begin", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: id }),
-    });
-    if (r.status === 409) {
-      const err = new Error("busy");
-      err.code = 409;
-      throw err;
-    }
-    if (!r.ok) throw new Error("begin failed");
+    return request("/test/begin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: id }) });
   }
 
   async function endTest(id) {
     try {
-      await fetch("/test/end", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: id }),
-      });
-    } catch (_) {}
+      await request("/test/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: id }) }, null, 2000);
+    } catch (_) {
+      el.status.textContent += " — session release unconfirmed; server lock expires automatically.";
+    }
   }
 
   function stopLoads() {
@@ -456,14 +481,12 @@
   }
 
   function startDownloadLoad(bytesRef, streams, size) {
-    const controllers = [];
     const n = Math.max(1, streams);
     const sz = size || chunkBytes;
     for (let i = 0; i < n; i++) {
       const ac = new AbortController();
-      controllers.push(ac);
       abortControllers.push(ac);
-      (async () => {
+      loadJobs.push((async () => {
         while (!ac.signal.aborted) {
           try {
             const r = await fetch("/download?size=" + sz + "&n=" + Math.random(), {
@@ -472,6 +495,8 @@
               headers: sessionHeaders(),
             });
             if (!r.ok || !r.body) {
+              bytesRef.errors += 1;
+              if (r.body) await r.body.cancel();
               await new Promise((res) => setTimeout(res, 100));
               continue;
             }
@@ -479,16 +504,17 @@
             for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
-              bytesRef.value += value.byteLength;
+              bytesRef.down += value.byteLength;
+              bytesRef.value = bytesRef.down + bytesRef.up;
             }
           } catch (_) {
             if (ac.signal.aborted) return;
+            bytesRef.errors += 1;
             await new Promise((r) => setTimeout(r, 50));
           }
         }
-      })();
+      })());
     }
-    return () => controllers.forEach((c) => c.abort());
   }
 
   function getUploadBlob(size) {
@@ -511,43 +537,44 @@
     return uploadBlob;
   }
 
-  function startUploadLoad(bytesRef, streams, size) {
-    const controllers = [];
+  function startUploadLoad(bytesRef, streams, size, phase) {
     const blob = getUploadBlob(size || chunkBytes);
     const n = Math.max(1, streams);
     for (let i = 0; i < n; i++) {
       const ac = new AbortController();
-      controllers.push(ac);
       abortControllers.push(ac);
-      (async () => {
+      loadJobs.push((async () => {
         while (!ac.signal.aborted) {
           try {
-            const r = await fetch("/upload", {
+            const r = await fetch("/upload?phase=" + phase, {
               method: "POST",
               body: blob,
               signal: ac.signal,
               headers: sessionHeaders(),
             });
             if (r.ok) {
-              bytesRef.value += blob.size;
               if (r.body) {
                 try {
                   await r.body.cancel();
                 } catch (_) {}
               }
+            } else {
+              bytesRef.errors += 1;
+              if (r.body) await r.body.cancel();
+              await new Promise(r => setTimeout(r, 100));
             }
           } catch (_) {
             if (ac.signal.aborted) return;
+            bytesRef.errors += 1;
             await new Promise((r) => setTimeout(r, 50));
           }
         }
-      })();
+      })());
     }
-    return () => controllers.forEach((c) => c.abort());
   }
 
   function emptyStats() {
-    return { samples: [], sampleTimes: [], attempts: 0, failures: 0, rpmSuccess: 0, rpmAttempts: 0, durationMs: 0 };
+    return { samples: [], recoverySamples: [], sampleTimes: [], downBytes: 0, upBytes: 0, loadErrors: 0, attempts: 0, failures: 0, rpmSuccess: 0, rpmAttempts: 0, durationMs: 0 };
   }
 
   function updateLiveExtras(stats) {
@@ -561,18 +588,18 @@
   }
 
   function recoveryStableMs(stats, baselineP50, slackMs, need) {
-    if (!stats.samples.length || Number.isNaN(baselineP50)) return NaN;
-    const thr = baselineP50 + slackMs;
-    let streak = 0;
-    for (let i = 0; i < stats.samples.length; i++) {
-      if (stats.samples[i] <= thr) {
-        streak++;
-        if (streak >= need) return stats.sampleTimes[i];
-      } else {
-        streak = 0;
-      }
+    return TestResults.recovery(stats, baselineP50, slackMs, need);
+  }
+
+  async function uploadStats(phase, settled = false) {
+    const deadline = performance.now() + 2000;
+    for (;;) {
+      const stats = await request("/test/stats?phase=" + phase, { cache: "no-store", headers: sessionHeaders() }, runController?.signal, Math.max(1, deadline - performance.now()));
+      if (!Number.isFinite(stats.bytes) || stats.bytes < 0 || !Number.isInteger(stats.active) || stats.active < 0) throw new Error("invalid upload byte count");
+      if (!settled || stats.active === 0) return stats.bytes;
+      if (performance.now() >= deadline) throw new Error("upload did not stop");
+      await delay(20, runController?.signal);
     }
-    return NaN;
   }
 
   /**
@@ -594,52 +621,86 @@
     const idleP50 = opts.idleP50 || 20;
     const rpmBudget = Math.max(80, idleP50 * 3);
 
-    let stopLoad = null;
-    if (opts.loadFn) stopLoad = opts.loadFn();
-
+    const controller = new AbortController();
+    let stoppedAt = 0;
+    const abort = () => { stoppedAt = stoppedAt || performance.now(); controller.abort(); };
+    if (runController.signal.aborted) throw abortError();
+    runController.signal.addEventListener("abort", abort, { once: true });
     const phaseStart = performance.now();
-    const endAt = phaseStart + (opts.durationMs || meta.durationMs);
-    while (performance.now() < endAt) {
-      stats.attempts += 1;
-      try {
-        const ms = await pingOnce();
-        stats.samples.push(ms);
-        stats.sampleTimes.push(performance.now() - phaseStart);
-        el.liveLatency.textContent = fmtMs(ms);
-        addChartPoint((performance.now() - t0) / 1000, ms, meta.color);
-
-        // RPM: SLA successes ≠ probe loss (slow replies are RPM misses only).
-        if (opts.rpm) {
-          stats.attempts += RPM_PARALLEL;
-          stats.rpmAttempts += RPM_PARALLEL;
-          const burst = await rpmBurst(RPM_PARALLEL, rpmBudget);
-          stats.rpmSuccess += burst.slaOk;
-          stats.failures += burst.transportFail;
-          totalPingFailures += burst.transportFail;
+    const timer = setTimeout(abort, opts.durationMs || meta.durationMs);
+    const signal = controller.signal;
+    signal.addEventListener("abort", stopLoads, { once: true });
+    if (bytesRef) Object.assign(bytesRef, { down: 0, up: 0, errors: 0 });
+    let lastStats = 0;
+    try {
+      if (opts.loadFn) opts.loadFn();
+      while (!signal.aborted) {
+        try {
+          const ms = await pingOnce(signal);
+          if (signal.aborted) break;
+          stats.attempts += 1;
+          stats.samples.push(ms);
+          stats.recoverySamples.push(ms);
+          stats.sampleTimes.push(performance.now() - (opts.sampleOrigin || phaseStart));
+          el.liveLatency.textContent = fmtMs(ms);
+          addChartPoint((performance.now() - t0) / 1000, ms, meta.color);
+          if (opts.rpm) {
+            const burst = await rpmBurst(RPM_PARALLEL, rpmBudget, signal);
+            if (!signal.aborted) {
+              stats.attempts += burst.total;
+              stats.rpmAttempts += burst.total;
+              stats.rpmSuccess += burst.slaOk;
+              stats.failures += burst.transportFail;
+              totalPingFailures += burst.transportFail;
+            }
+          }
+        } catch (_) {
+          if (signal.aborted) break;
+          stats.attempts += 1;
+          stats.failures += 1;
+          stats.recoverySamples.push(NaN);
+          stats.sampleTimes.push(performance.now() - (opts.sampleOrigin || phaseStart));
+          totalPingFailures += 1;
         }
-      } catch (_) {
-        stats.failures += 1;
-        totalPingFailures += 1;
+        if (opts.uploadPhase && performance.now() - lastStats > 1000) {
+          try { bytesRef.up = await uploadStats(opts.uploadPhase); }
+          catch (_) { if (!runController.signal.aborted) bytesRef.errors += 1; }
+          lastStats = performance.now();
+        }
+        let mbps = NaN;
+        if (bytesRef) {
+          bytesRef.value = bytesRef.down + bytesRef.up;
+          const text = fmtMbps(bytesRef.value, performance.now() - phaseStart);
+          el.liveThroughput.textContent = text;
+          mbps = parseMbps(text);
+        } else el.liveThroughput.textContent = "—";
+        stats.durationMs = performance.now() - phaseStart;
+        updateLiveExtras(stats);
+        updateGauges(stats.samples[stats.samples.length - 1] || 0, mbps);
+        await delay(PING_EVERY_MS, signal).catch(() => {});
       }
-
-      let mbps = NaN;
-      if (bytesRef) {
-        const elapsed = performance.now() - (bytesRef.tStart || phaseStart);
-        const text = fmtMbps(bytesRef.value, elapsed);
-        el.liveThroughput.textContent = text;
-        mbps = parseMbps(text);
-      } else {
-        el.liveThroughput.textContent = "—";
-      }
-      stats.durationMs = performance.now() - phaseStart;
-      updateLiveExtras(stats);
-      updateGauges(stats.samples[stats.samples.length - 1] || 0, mbps);
-      await new Promise((r) => setTimeout(r, PING_EVERY_MS));
+    } finally {
+      clearTimeout(timer);
+      abort();
+      stopLoads();
+      await Promise.allSettled(loadJobs);
+      loadJobs = [];
+      runController.signal.removeEventListener("abort", abort);
     }
-
-    if (stopLoad) stopLoad();
-    stopLoads();
-    stats.durationMs = performance.now() - phaseStart;
+    stats.stoppedAt = stoppedAt;
+    stats.durationMs = stoppedAt - phaseStart;
+    stats.observationMs = stoppedAt - (opts.sampleOrigin || phaseStart);
+    if (runController.signal.aborted) throw abortError();
+    if (opts.uploadPhase) {
+      try { bytesRef.up = await uploadStats(opts.uploadPhase, true); }
+      catch (_) { bytesRef.errors += 1; }
+    }
+    if (bytesRef) {
+      bytesRef.value = bytesRef.down + bytesRef.up;
+      stats.downBytes = bytesRef.down;
+      stats.upBytes = bytesRef.up;
+      stats.loadErrors = bytesRef.errors;
+    }
     return stats;
   }
 
@@ -714,9 +775,16 @@
     const downInc = increaseMs(idle.samples, down.samples);
     const upInc = increaseMs(idle.samples, up.samples);
     const biInc = increaseMs(idle.samples, bi.samples);
-    const gDown = gradeForIncrease(downInc);
-    const gUp = gradeForIncrease(upInc);
-    const gBi = gradeForIncrease(biInc);
+    const warnings = [...runWarnings];
+    function checkedGrade(stats, downLoad, upLoad, inc, name) {
+      const reasons = TestResults.quality(idle, stats, downLoad, upLoad);
+      if (reasons.length) warnings.push(name + ": " + reasons.join("; ") + ". Grade withheld.");
+      if (stats.failures) warnings.push(name + ": HTTP probe failures; latency uses successful probes only.");
+      return reasons.length || runWarnings.length ? "—" : gradeForIncrease(inc);
+    }
+    const gDown = checkedGrade(down, true, false, downInc, "Download");
+    const gUp = checkedGrade(up, false, true, upInc, "Upload");
+    const gBi = checkedGrade(bi, true, true, biInc, "Bidirectional");
     const gAll = worseGrades(gDown, gUp, gBi);
 
     el.gradeOverall.textContent = gAll;
@@ -755,12 +823,12 @@
       ["Up probe-loss / jitter", fmtPct(lossPercent(up.failures, up.attempts)) + " / " + fmtMs(jitterMs(up.samples))],
       ["Up RPM (SLA)", fmtRpm(rpmFrom(up.rpmSuccess, up.durationMs))],
       ["Both increase", fmtMs(biInc)],
-      ["Both throughput", fmtMbps(biBytes, biMs)],
+      ["Both download / upload", fmtMbps(bi.downBytes, biMs) + " / " + fmtMbps(bi.upBytes, biMs)],
       ["Both probe-loss / jitter", fmtPct(lossPercent(bi.failures, bi.attempts)) + " / " + fmtMs(jitterMs(bi.samples))],
       ["Both RPM (SLA)", fmtRpm(rpmFrom(bi.rpmSuccess, bi.durationMs))],
       ["Loaded probe-loss", fmtPct(loadedLoss)],
       ["Loaded RPM (SLA)", fmtRpm(loadedRpm)],
-      ["Recovery (3× near idle)", Number.isNaN(recUntil) ? "> " + PHASE.recovery.durationMs + " ms" : fmtMs(recUntil)],
+      ["Recovery (3× near idle)", Number.isNaN(recUntil) ? "> " + Math.round(recovery.observationMs) + " ms" : fmtMs(recUntil)],
       ["Recovery p50", fmtMs(percentile([...recovery.samples].sort((a, b) => a - b), 50))],
     ];
 
@@ -772,17 +840,107 @@
       .join("");
 
     el.results.hidden = false;
-    if (totalPingFailures > 0) {
-      el.warning.hidden = false;
-      el.warning.textContent =
-        "Warning: " + totalPingFailures + " probe failure(s) — loss/RPM reflect that.";
-    } else {
-      el.warning.hidden = true;
+    if (totalPingFailures) warnings.push(totalPingFailures + " HTTP probe failure(s) across the run.");
+    if (Number.isNaN(recUntil)) warnings.push("Recovery was not confirmed within the observation window.");
+    el.warning.hidden = warnings.length === 0;
+    el.warning.textContent = warnings.join(" ");
+    const result = {
+      version: 1, timestamp: new Date().toISOString(), label: labelInput.value.trim().slice(0, 80) || "Untitled run",
+      server: location.origin, overall_grade: gAll,
+      idle_p50_ms: idleP50, recovery_ms: recUntil, quality_warnings: warnings,
+      warmup_streams: warmup.streams, warmup_chunk: warmup.chunk,
+    };
+    for (const [name, stats, inc, grade] of [["download", down, downInc, gDown], ["upload", up, upInc, gUp], ["bidir", bi, biInc, gBi]]) {
+      Object.assign(result, {
+        [name + "_grade"]: grade, [name + "_inc_ms"]: inc,
+        [name + "_mbps"]: (stats.downBytes + stats.upBytes) * 8 / stats.durationMs / 1000,
+        [name + "_loss_pct"]: lossPercent(stats.failures, stats.attempts),
+        [name + "_jitter_ms"]: jitterMs(stats.samples),
+        [name + "_rpm"]: rpmFrom(stats.rpmSuccess, stats.durationMs),
+        [name + "_samples"]: stats.samples.length, [name + "_load_errors"]: stats.loadErrors,
+      });
     }
+    result.bidir_download_mbps = bi.downBytes * 8 / biMs / 1000;
+    result.bidir_upload_mbps = bi.upBytes * 8 / biMs / 1000;
+    // JSON turns unavailable numeric values into null for storage and export.
+    history.push(JSON.parse(JSON.stringify(result)));
+    history = history.slice(-20);
+    try { localStorage.setItem(historyKey, JSON.stringify(history)); }
+    catch (_) { document.getElementById("historyNotice").textContent = "Could not save runs in this browser. Export to keep this result."; }
+    renderHistory();
+  }
+
+  function renderHistory() {
+    for (const id of ["beforeRun", "afterRun"]) {
+      const select = document.getElementById(id);
+      select.replaceChildren();
+      history.forEach((run, i) => {
+        const option = document.createElement("option");
+        option.value = i;
+        option.textContent = run.label + " — " + run.timestamp + " (" + run.overall_grade + ")";
+        select.append(option);
+      });
+      select.disabled = !history.length;
+    }
+    document.getElementById("beforeRun").selectedIndex = Math.max(0, history.length - 2);
+    document.getElementById("afterRun").selectedIndex = history.length - 1;
+    document.getElementById("exportJSON").disabled = !history.length;
+    document.getElementById("exportCSV").disabled = !history.length;
+    document.getElementById("clearHistory").disabled = !history.length;
+    renderComparison();
+  }
+
+  function renderComparison() {
+    const host = document.getElementById("comparison");
+    host.replaceChildren();
+    const before = history[document.getElementById("beforeRun").value];
+    const after = history[document.getElementById("afterRun").value];
+    if (!before || !after) return;
+    const table = document.createElement("table");
+    const caption = document.createElement("caption");
+    caption.textContent = "Before / after comparison — differences are after minus before";
+    table.append(caption);
+    const addRow = (values, header = false) => {
+      const row = document.createElement("tr");
+      values.forEach((value, i) => {
+        const cell = document.createElement(header || i === 0 ? "th" : "td");
+        if (header || i === 0) cell.scope = header ? "col" : "row";
+        cell.textContent = value;
+        row.append(cell);
+      });
+      table.append(row);
+    };
+    addRow(["Metric", before.label, after.label, "Difference"], true);
+    const display = v => v == null ? "—" : typeof v === "number" ? v.toFixed(1) : v;
+    for (const [key, label] of Object.entries(TestResults.fields)) {
+      const a = before[key], b = after[key];
+      const delta = typeof a === "number" && typeof b === "number" ? (b - a).toFixed(1) : "—";
+      addRow([label, display(a), display(b), delta]);
+    }
+    addRow(["Quality warnings", (before.quality_warnings || []).join("; ") || "None", (after.quality_warnings || []).join("; ") || "None", "—"]);
+    host.append(table);
+  }
+
+  function exportRun(format) {
+    const result = history[document.getElementById("afterRun").value];
+    if (!result) return;
+    const blob = new Blob([format === "json" ? JSON.stringify(result, null, 2) : TestResults.csv(result)], { type: format === "json" ? "application/json" : "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "bufferbloat-" + result.timestamp.replace(/[^0-9T]/g, "-") + "." + format;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   async function runTest() {
+    if (runController) return;
+    runController = new AbortController();
+    runWarnings = document.hidden ? ["Tab was hidden during this run. Grade withheld; repeat with the tab visible."] : [];
     totalPingFailures = 0;
+    stopButton.hidden = false;
+    labelInput.disabled = true;
+    el.warning.hidden = true;
     el.start.disabled = true;
     if (el.startLabel) el.startLabel.textContent = "Running";
     if (el.heroStage) el.heroStage.classList.add("is-running");
@@ -791,20 +949,9 @@
     resetChart();
 
     sessionId = uuid();
-    try {
-      await beginTest(sessionId);
-    } catch (e) {
-      el.status.textContent =
-        e.code === 409 ? "Busy — another test is running. Try again shortly." : "Failed to start: " + e.message;
-      el.start.disabled = false;
-      if (el.startLabel) el.startLabel.textContent = "Start test";
-      if (el.heroStage) el.heroStage.classList.remove("is-running");
-      sessionId = null;
-      return;
-    }
-
     const t0 = performance.now();
     try {
+      await beginTest(sessionId);
       // Baseline without RPM bursts — keep idle P50 clean for recovery threshold.
       const idle = await runPhase("baseline", PHASE.baseline, t0, { rpm: false });
       const idleP50 = percentile([...idle.samples].sort((a, b) => a - b), 50);
@@ -840,7 +987,8 @@
         rpm: true,
         idleP50,
         bytesRef: upBytes,
-        loadFn: () => startUploadLoad(upBytes, uploadStreams, chunkBytes),
+        uploadPhase: "upload",
+        loadFn: () => startUploadLoad(upBytes, uploadStreams, chunkBytes, "upload"),
       });
       const upMs = up.durationMs;
 
@@ -858,18 +1006,16 @@
         rpm: true,
         idleP50,
         bytesRef: biBytes,
+        uploadPhase: "bidir",
         loadFn: () => {
-          const a = startDownloadLoad(biBytes, biDownStreams, chunkBytes);
-          const b = startUploadLoad(biBytes, biUpStreams, chunkBytes);
-          return () => {
-            a();
-            b();
-          };
+          startDownloadLoad(biBytes, biDownStreams, chunkBytes);
+          startUploadLoad(biBytes, biUpStreams, chunkBytes, "bidir");
         },
       });
       const biMs = bi.durationMs;
 
       const recovery = await runPhase("recovery", PHASE.recovery, t0, {
+        sampleOrigin: bi.stoppedAt,
         rpm: false,
         idleP50,
       });
@@ -881,7 +1027,7 @@
         n.classList.remove("active");
         n.classList.add("done");
       });
-      await new Promise((r) => setTimeout(r, PHASE.cooldown.durationMs));
+      await delay(PHASE.cooldown.durationMs, runController.signal);
 
       renderResults({
         idle,
@@ -899,19 +1045,44 @@
       });
       el.status.textContent = "Done";
     } catch (e) {
-      el.status.textContent = "Test failed: " + e.message;
+      el.status.textContent = runController.signal.aborted ? "Test stopped — incomplete run was not saved." : e.code === 409 ? "Busy — another test is running. Try again shortly." : "Test failed: " + e.message;
       el.warning.hidden = false;
       el.warning.textContent = "Test ended early.";
     } finally {
       stopLoads();
+      await Promise.allSettled(loadJobs);
+      loadJobs = [];
       await endTest(sessionId);
       sessionId = null;
+      runController = null;
+      stopButton.hidden = true;
+      labelInput.disabled = false;
       el.start.disabled = false;
       if (el.startLabel) el.startLabel.textContent = "Start test";
       if (el.heroStage) el.heroStage.classList.remove("is-running");
     }
   }
 
+  stopButton.addEventListener("click", () => { runController?.abort(); stopLoads(); });
+  document.addEventListener("visibilitychange", () => {
+    if (runController && document.hidden && !runWarnings.length) runWarnings.push("Tab was hidden during this run. Grade withheld; repeat with the tab visible.");
+  });
+  window.addEventListener("pagehide", () => {
+    if (!sessionId) return;
+    runController?.abort();
+    stopLoads();
+    navigator.sendBeacon("/test/end", new Blob([JSON.stringify({ sessionId })], { type: "application/json" }));
+  });
+  for (const id of ["beforeRun", "afterRun"]) document.getElementById(id).addEventListener("change", renderComparison);
+  document.getElementById("exportJSON").addEventListener("click", () => exportRun("json"));
+  document.getElementById("exportCSV").addEventListener("click", () => exportRun("csv"));
+  document.getElementById("clearHistory").addEventListener("click", () => {
+    history = [];
+    try { localStorage.removeItem(historyKey); }
+    catch (_) { document.getElementById("historyNotice").textContent = "Could not clear browser storage."; }
+    renderHistory();
+  });
+  renderHistory();
   el.start.addEventListener("click", runTest);
   updateGauges(0, 0);
   loadConfig();

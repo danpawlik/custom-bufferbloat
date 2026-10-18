@@ -20,8 +20,8 @@ Self-hosted, LibreQoS-inspired **bufferbloat / responsiveness** test: one **Go**
 
 - Authentication / TLS inside the binary (reverse proxy / firewall if WAN).
 - Quality of Outcome (QoO), Virtual Household, online rankings.
-- Persistent history / database.
-- Full browser E2E in CI.
+- Server-side persistent history / database (browser-local history is supported).
+- Full browser E2E in CI (manual headless smoke checks and Node helper tests are available).
 - C implementation.
 - Raw ICMP packet-loss measurement (we report **HTTP probe** loss only).
 
@@ -176,3 +176,19 @@ custom-bufferbloat/
 - Router CPU — session lock, stream caps, cheap upload payload.
 - Misread LAN results — documented in README.
 - Lock expiry mid-test — 90s TTL + Touch on ping with session header.
+
+## Reliability and saved runs (2026-10-18)
+
+- Both clients cancel phase requests and bound probe timeouts. CLI signals trigger independent,
+  bounded session cleanup; the browser has a Stop button and best-effort page-exit cleanup.
+- `/upload?phase=upload|bidir` counts bytes as the server receives them, even for incomplete
+  bodies. `/test/stats?phase=upload|bidir` returns session-local `{bytes, active}` counters.
+  Counters expire with the session. The clients read settled counts after each upload phase.
+- A grade requires five successful baseline/phase samples, nonzero payload in each required
+  direction, and no load/accounting errors. Hidden browser tabs invalidate grades. HTTP probe
+  failures remain visible as quality warnings; these checks do not prove link saturation.
+- Recovery retains failed probes as streak breaks. JSON uses `null` for missing measurements;
+  the CLI handles output errors. Bidirectional download/upload Mbps are reported separately.
+- The browser stores the newest 20 labeled runs locally and supports JSON/CSV export,
+  before/after comparisons, and clearing history. It stores no history on the server.
+- Regression checks: `go test -race ./...`, `go vet ./...`, `node --test web/*.test.js`.

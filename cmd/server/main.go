@@ -31,6 +31,7 @@ func main() {
 	mux.Handle("GET /{$}", static)
 	mux.Handle("GET /index.html", static)
 	mux.Handle("GET /app.js", static)
+	mux.Handle("GET /results.js", static)
 	mux.Handle("GET /style.css", static)
 	mux.Handle("GET /ping-worker.js", static)
 

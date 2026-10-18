@@ -44,6 +44,19 @@ baseline → **warm-up** (find saturation) → download → upload → **bidirec
 
 (with **loss / jitter / RPM** reported per load phase).
 
+Use **Stop test** to cancel traffic and release the session. Interrupted runs are not saved.
+Give runs a label such as **SQM off** or **SQM on**. The browser keeps the last 20
+completed runs locally, including any quality warnings. Select **Before** and **After**
+to compare latency, speed, probe loss, and recovery. Export the selected **After** run
+as JSON or CSV; **Clear saved runs** removes the local history. No results are stored
+on the server. Keep the same client, server, and connection when comparing runs.
+
+Bidirectional results show download and upload speeds separately. A **—** grade means
+insufficient evidence: fewer than five successful baseline/phase samples, failed load
+requests/accounting, or no transferred bytes in a required direction. Hiding the browser
+tab during a run also withholds grades. These checks catch incomplete tests; they do
+not prove that the ISP link was saturated or rule out a client/server CPU bottleneck.
+
 Health check:
 
 ```bash
@@ -79,6 +92,10 @@ go run ./cmd/cli -url http://127.0.0.1:8080 -json
 ```
 
 The CLI talks to the same HTTP API as the browser (~40–60 s, including warm-up / drains / bidir / recovery).
+Ctrl+C or SIGTERM cancels requests and attempts session release with a separate two-second
+timeout. JSON includes `quality_warnings`, `bidir_download_mbps`, and `bidir_upload_mbps`;
+unavailable numeric values are `null`. Output errors and interrupted runs exit nonzero.
+The CLI requires a server that provides `/test/stats` for upload byte accounting.
 
 ### 4. OpenWrt
 
@@ -125,11 +142,15 @@ Default listen: `0.0.0.0:8080`, max one concurrent test. Optionally integrate `o
 | `GET` | `/api/config` | UI hints (`downloadStreams`, `uploadStreams`, `maxConcurrent`) |
 | `GET` | `/ping` | Latency probe |
 | `GET` | `/download?size=N` | Download saturation (requires `X-Session-Id`) |
-| `POST` | `/upload` | Upload saturation (requires `X-Session-Id`) |
+| `POST` | `/upload?phase=upload` | Upload saturation; `phase=upload` (default) or `bidir` (requires `X-Session-Id`) |
+| `GET` | `/test/stats?phase=upload` | Received upload payload bytes and active uploads for this session/phase (requires `X-Session-Id`) |
 | `POST` | `/test/begin` | Acquire lock (`{"sessionId"}`) → `409` if busy |
 | `POST` | `/test/end` | Release lock |
 
-Load endpoints return **403** without an active session from `/test/begin`.
+Load endpoints and `/test/stats` return **403** without an active session from `/test/begin`.
+Stats return `{"bytes":1234,"active":0}` and include bytes received from incomplete uploads.
+Counters are cumulative per session and phase, and disappear when the session ends or expires.
+Use a new session for each run. These in-memory counters are not saved test results.
 
 ## Flags
 
@@ -152,7 +173,9 @@ Upload uses fewer parallel streams by default: generating/sending bodies is **cl
 ## Development
 
 ```bash
-go test ./...
+go test -race ./...
+go vet ./...
+node --test web/*.test.js
 go build -trimpath -ldflags="-s -w" -o bufferbloat-test ./cmd/server
 go build -trimpath -ldflags="-s -w" -o bufferbloat-test-cli ./cmd/cli
 ```
@@ -167,7 +190,10 @@ Stripped server binary is ~6 MiB (OK on modern OpenWrt boards; tight on tiny f
 - **Probe loss** = failed HTTP `/ping` transport only (timeouts/errors) — **not** raw packet loss and **not** slow replies.
 - **RPM (SLA)** ≈ probes/min that finish within `max(80 ms, 3× idle p50)`; slow-but-successful replies lower RPM, they do not inflate probe loss.
 - **Jitter** = mean |ΔRTT| on successful probes.
-- **Recovery** = time until **3 consecutive** samples are ≤ idle p50 + 5 ms (timestamped, not assumed 200 ms spacing).
+- **Recovery** = time until **3 consecutive** samples are ≤ idle p50 + 5 ms. Failed probes break the streak; timestamps include the gap between stopping load and starting recovery probes.
+- Each phase cancels its in-flight load and probe requests. Probes also have a five-second deadline; cancellation at a phase boundary is not counted as probe loss.
+- Upload throughput uses bytes **received by the server**, including partial requests, rather than only completed upload bodies. Clients allow up to two seconds after stopping uploads to read settled counters; failed accounting withholds the grade.
+- Grades require at least five successful baseline and phase samples plus nonzero traffic in each requested direction and no load errors. Probe loss remains separate and is shown in quality warnings.
 - Short drains also sit between down→up and up→bidir.
 - Browser connection limits (~6 per host) → warm-up caps streams; upload stays lower (client CPU).
 - Load endpoints require an active `/test/begin` session (`X-Session-Id`).

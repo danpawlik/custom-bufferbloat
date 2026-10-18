@@ -137,7 +137,8 @@ func RecoveryMsUntil(samples []float64, baselineP50, slackMs, intervalMs float64
 
 // RecoveryMsStable returns elapsed ms (from sampleTimesMs) when `need` consecutive
 // samples are ≤ baselineP50+slackMs. sampleTimesMs[i] is time of samples[i] from
-// phase start. Returns NaN if never stably recovered.
+// phase start. Failed attempts must be represented by NaN to break the streak.
+// Returns NaN if never stably recovered.
 func RecoveryMsStable(samples, sampleTimesMs []float64, baselineP50, slackMs float64, need int) float64 {
 	if len(samples) == 0 || math.IsNaN(baselineP50) || len(samples) != len(sampleTimesMs) {
 		return math.NaN()

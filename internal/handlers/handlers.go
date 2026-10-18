@@ -52,6 +52,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ping", s.Ping)
 	mux.HandleFunc("GET /download", s.Download)
 	mux.HandleFunc("POST /upload", s.Upload)
+	mux.HandleFunc("GET /test/stats", s.Stats)
 	mux.HandleFunc("POST /test/begin", s.Begin)
 	mux.HandleFunc("POST /test/end", s.End)
 	mux.HandleFunc("GET /api/config", s.Config)
@@ -149,13 +150,66 @@ func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSession(w, r); !ok {
+func uploadPhase(r *http.Request) (int, bool) {
+	switch r.URL.Query().Get("phase") {
+	case "", "upload":
+		return 0, true
+	case "bidir":
+		return 1, true
+	default:
+		return 0, false
+	}
+}
+
+func (s *Server) Stats(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.requireSession(w, r)
+	if !ok {
 		return
 	}
+	phase, ok := uploadPhase(r)
+	if !ok {
+		http.Error(w, "invalid phase", http.StatusBadRequest)
+		return
+	}
+	stats, ok := s.Lock.UploadStats(id, phase)
+	if !ok {
+		http.Error(w, "session expired", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, stats)
+}
 
+type uploadCounter struct {
+	lock  *lock.TestLock
+	id    string
+	phase int
+}
+
+func (c uploadCounter) Write(p []byte) (int, error) {
+	if !c.lock.Upload(c.id, c.phase, int64(len(p)), 0) {
+		return 0, io.ErrClosedPipe
+	}
+	return len(p), nil
+}
+
+func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	phase, ok := uploadPhase(r)
+	if !ok {
+		http.Error(w, "invalid phase", http.StatusBadRequest)
+		return
+	}
+	if !s.Lock.Upload(id, phase, 0, 1) {
+		http.Error(w, "session expired", http.StatusForbidden)
+		return
+	}
+	defer s.Lock.Upload(id, phase, 0, -1)
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	n, err := io.Copy(io.Discard, r.Body)
+	n, err := io.Copy(uploadCounter{s.Lock, id, phase}, r.Body)
 	if err != nil {
 		http.Error(w, "upload failed", http.StatusRequestEntityTooLarge)
 		return

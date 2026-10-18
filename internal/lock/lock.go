@@ -5,13 +5,22 @@ import (
 	"time"
 )
 
+type UploadStats struct {
+	Bytes  int64 `json:"bytes"`
+	Active int   `json:"active"`
+}
+type holder struct {
+	expires time.Time
+	uploads [2]UploadStats
+}
+
 // TestLock allows a limited number of concurrent tests with TTL auto-release.
 type TestLock struct {
-	mu       sync.Mutex
-	max      int
-	ttl      time.Duration
-	holders  map[string]time.Time
-	now      func() time.Time
+	mu      sync.Mutex
+	max     int
+	ttl     time.Duration
+	holders map[string]*holder
+	now     func() time.Time
 }
 
 func New(maxConcurrent int, ttl time.Duration) *TestLock {
@@ -24,7 +33,7 @@ func New(maxConcurrent int, ttl time.Duration) *TestLock {
 	return &TestLock{
 		max:     maxConcurrent,
 		ttl:     ttl,
-		holders: make(map[string]time.Time),
+		holders: make(map[string]*holder),
 		now:     time.Now,
 	}
 }
@@ -32,7 +41,7 @@ func New(maxConcurrent int, ttl time.Duration) *TestLock {
 func (l *TestLock) purgeExpiredLocked() {
 	now := l.now()
 	for id, expires := range l.holders {
-		if now.After(expires) {
+		if !now.Before(expires.expires) {
 			delete(l.holders, id)
 		}
 	}
@@ -44,18 +53,15 @@ func (l *TestLock) TryAcquire(sessionID string) bool {
 	defer l.mu.Unlock()
 	l.purgeExpiredLocked()
 
-	if exp, ok := l.holders[sessionID]; ok {
-		if l.now().Before(exp) {
-			l.holders[sessionID] = l.now().Add(l.ttl)
-			return true
-		}
-		delete(l.holders, sessionID)
+	if h, ok := l.holders[sessionID]; ok {
+		h.expires = l.now().Add(l.ttl)
+		return true
 	}
 
 	if len(l.holders) >= l.max {
 		return false
 	}
-	l.holders[sessionID] = l.now().Add(l.ttl)
+	l.holders[sessionID] = &holder{expires: l.now().Add(l.ttl)}
 	return true
 }
 
@@ -91,6 +97,31 @@ func (l *TestLock) Touch(sessionID string) bool {
 	if _, ok := l.holders[sessionID]; !ok {
 		return false
 	}
-	l.holders[sessionID] = l.now().Add(l.ttl)
+	l.holders[sessionID].expires = l.now().Add(l.ttl)
 	return true
+}
+
+// Upload accounts received payload, including incomplete requests, within a session.
+func (l *TestLock) Upload(id string, phase int, bytes int64, activeDelta int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.purgeExpiredLocked()
+	h, ok := l.holders[id]
+	if !ok || phase < 0 || phase > 1 {
+		return false
+	}
+	h.uploads[phase].Bytes += bytes
+	h.uploads[phase].Active += activeDelta
+	return true
+}
+
+func (l *TestLock) UploadStats(id string, phase int) (UploadStats, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.purgeExpiredLocked()
+	h, ok := l.holders[id]
+	if !ok || phase < 0 || phase > 1 {
+		return UploadStats{}, false
+	}
+	return h.uploads[phase], true
 }

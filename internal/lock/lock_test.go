@@ -45,3 +45,21 @@ func TestTTLExpiry(t *testing.T) {
 		t.Fatal("expected acquire after TTL")
 	}
 }
+
+func TestUploadCountersExpire(t *testing.T) {
+	l := New(1, time.Second)
+	base := time.Now()
+	l.now = func() time.Time { return base }
+	l.TryAcquire("a")
+	l.Upload("a", 0, 100, 1)
+	l.now = func() time.Time { return base.Add(time.Second) }
+	if l.Upload("a", 0, 10, 0) {
+		t.Fatal("expired session accepted payload")
+	}
+	if _, ok := l.UploadStats("a", 0); ok {
+		t.Fatal("expired counters visible")
+	}
+	if !l.TryAcquire("b") {
+		t.Fatal("expired slot not released")
+	}
+}

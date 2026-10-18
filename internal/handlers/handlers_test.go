@@ -154,3 +154,73 @@ func TestRoutesRegister(t *testing.T) {
 		t.Fatalf("unexpected ping response")
 	}
 }
+
+// A reader that delivers real payload and then fails before Content-Length.
+type interruptedUpload struct{ sent bool }
+
+func (r *interruptedUpload) Read(p []byte) (int, error) {
+	if r.sent {
+		return 0, io.ErrUnexpectedEOF
+	}
+	r.sent = true
+	return copy(p, "partial bytes"), nil
+}
+
+func TestPartialUploadAccountingAndPhaseIsolation(t *testing.T) {
+	s := testServer()
+	beginSession(t, s, "partial")
+	req := httptest.NewRequest(http.MethodPost, "/upload?phase=upload", &interruptedUpload{})
+	req.Header.Set("X-Session-Id", "partial")
+	rr := httptest.NewRecorder()
+	s.Upload(rr, req)
+	if rr.Code == 200 {
+		t.Fatal("interrupted upload accepted")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/test/stats?phase=upload", nil)
+	req.Header.Set("X-Session-Id", "partial")
+	rr = httptest.NewRecorder()
+	s.Stats(rr, req)
+	var stats lock.UploadStats
+	if err := json.Unmarshal(rr.Body.Bytes(), &stats); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != 200 || stats.Bytes != 13 || stats.Active != 0 {
+		t.Fatalf("status %d stats %+v", rr.Code, stats)
+	}
+	other, ok := s.Lock.UploadStats("partial", 1)
+	if !ok || other.Bytes != 0 {
+		t.Fatal("upload leaked into bidirectional counters")
+	}
+	s.Lock.Release("partial")
+	rr = httptest.NewRecorder()
+	s.Stats(rr, req)
+	if rr.Code != 403 {
+		t.Fatal("released stats accessible")
+	}
+	beginSession(t, s, "partial")
+	fresh, _ := s.Lock.UploadStats("partial", 0)
+	if fresh.Bytes != 0 {
+		t.Fatal("old counters survived release")
+	}
+}
+
+func TestStatsValidation(t *testing.T) {
+	s := testServer()
+	beginSession(t, s, "s")
+	for _, tc := range []struct {
+		path, id string
+		want     int
+	}{
+		{"/test/stats?phase=upload", "", 403},
+		{"/test/stats?phase=invalid", "s", 400},
+		{"/test/stats?phase=bidir", "s", 200},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.Header.Set("X-Session-Id", tc.id)
+		rr := httptest.NewRecorder()
+		s.Stats(rr, req)
+		if rr.Code != tc.want {
+			t.Fatalf("%s: %d want %d", tc.path, rr.Code, tc.want)
+		}
+	}
+}

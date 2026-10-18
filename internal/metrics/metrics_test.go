@@ -72,3 +72,16 @@ func TestRecovery(t *testing.T) {
 		t.Fatalf("stable=%v want 1000", stable)
 	}
 }
+
+func TestRecoveryFailuresBreakStreak(t *testing.T) {
+	samples := []float64{10, math.NaN(), 10, math.NaN(), 10}
+	times := []float64{0, 200, 400, 600, 800}
+	if got := RecoveryMsStable(samples, times, 10, 5, 3); !math.IsNaN(got) {
+		t.Fatalf("false recovery: %v", got)
+	}
+	samples = append(samples, 10, 10)
+	times = append(times, 1000, 1200)
+	if got := RecoveryMsStable(samples, times, 10, 5, 3); got != 1200 {
+		t.Fatalf("recovery=%v", got)
+	}
+}

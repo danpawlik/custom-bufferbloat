@@ -549,3 +549,22 @@ body {
     grid-template-columns: repeat(3, 1fr);
   }
 }
+
+[hidden] { display: none !important; }
+input, select, button:not(.start-btn) {
+  font: inherit; color: var(--text); background: var(--panel-2);
+  border: 1px solid var(--muted); border-radius: 6px; padding: .5rem;
+}
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .5; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.history { margin-top: 2rem; }
+.history-controls { display: flex; gap: .75rem; flex-wrap: wrap; align-items: end; }
+.history-controls label { display: flex; flex-direction: column; gap: .3rem; }
+.history-controls select { max-width: min(100%, 26rem); }
+.table-scroll { overflow-x: auto; margin-top: 1rem; }
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: .5rem; text-align: left; border-bottom: 1px solid var(--line); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

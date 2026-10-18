@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
+  <script src="/results.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -26,10 +27,13 @@
         with loss / jitter / responsiveness (RPM), plus recovery after the load stops.
       </p>
 
+      <label for="runLabel">Run label</label>
+      <input id="runLabel" maxlength="80" placeholder="e.g. SQM off / SQM on" />
       <div class="hero-actions" id="heroStage">
         <button id="startBtn" type="button" class="start-btn">
           <span class="start-label">Start test</span>
         </button>
+        <button id="stopBtn" type="button" hidden>Stop test</button>
       </div>
       <p id="status" class="status" aria-live="polite">Ready — wired Ethernet recommended</p>
     </header>
@@ -125,6 +129,20 @@
 
       <div class="cards" id="resultCards"></div>
       <p id="warning" class="warning" hidden></p>
+    </section>
+
+    <section class="history" aria-labelledby="historyTitle">
+      <h2 id="historyTitle">Saved runs</h2>
+      <p>Last 20 completed runs, stored in this browser. Compare the same server and test setup.</p>
+      <p id="historyNotice" role="status"></p>
+      <div class="history-controls">
+        <label>Before <select id="beforeRun" aria-label="Before run"></select></label>
+        <label>After <select id="afterRun" aria-label="After run"></select></label>
+        <button id="exportJSON" type="button" disabled>Export after as JSON</button>
+        <button id="exportCSV" type="button" disabled>Export after as CSV</button>
+        <button id="clearHistory" type="button">Clear saved runs</button>
+      </div>
+      <div id="comparison" class="table-scroll"></div>
     </section>
 
     <footer class="note">
