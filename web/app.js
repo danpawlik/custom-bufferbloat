@@ -203,9 +203,8 @@
     return ((bytes * 8) / (ms / 1000) / 1e6).toFixed(1) + " Mbps";
   }
 
-  function parseMbps(text) {
-    const m = /([\d.]+)\s*Mbps/.exec(text || "");
-    return m ? parseFloat(m[1]) : NaN;
+  function fmtLiveMbps(mbps) {
+    return Number.isFinite(mbps) ? mbps.toFixed(1) + " Mbps" : "Measuring…";
   }
 
   async function loadConfig() {
@@ -651,7 +650,17 @@
     const signal = controller.signal;
     signal.addEventListener("abort", stopLoads, { once: true });
     if (bytesRef) Object.assign(bytesRef, { down: 0, up: 0, errors: 0 });
-    let lastStats = 0;
+    let lastStats = phaseStart;
+    const downRate = TestResults.liveRate(phaseStart);
+    const upRate = TestResults.liveRate(phaseStart);
+    let downMbps = 0, upMbps = opts.uploadPhase ? NaN : 0;
+    const both = key === "bidir";
+    document.getElementById("throughputDirections").hidden = !both;
+    el.liveThroughput.textContent = bytesRef ? "Measuring…" : "—";
+    document.getElementById("liveDownload").textContent = "Measuring…";
+    document.getElementById("liveUpload").textContent = "Measuring…";
+    updateGauges(0, 0);
+
     try {
       if (opts.loadFn) opts.loadFn();
       while (!signal.aborted) {
@@ -683,26 +692,27 @@
           totalPingFailures += 1;
         }
         if (opts.uploadPhase && performance.now() - lastStats > 1000) {
-          try { bytesRef.up = await uploadStats(opts.uploadPhase) - uploadStart; }
+          try {
+            bytesRef.up = await uploadStats(opts.uploadPhase) - uploadStart;
+            upMbps = upRate(bytesRef.up, performance.now());
+          }
           catch (_) { if (!runController.signal.aborted) bytesRef.errors += 1; }
           lastStats = performance.now();
         }
         let mbps = 0;
-        const both = key === "bidir";
-        document.getElementById("throughputDirections").hidden = !both;
         if (bytesRef) {
           bytesRef.value = bytesRef.down + bytesRef.up;
-          const text = fmtMbps(bytesRef.value, performance.now() - phaseStart);
-          el.liveThroughput.textContent = text;
-          mbps = parseMbps(text);
+          downMbps = opts.uploadPhase && !both ? 0 : downRate(bytesRef.down, performance.now());
+          mbps = downMbps + upMbps;
+          el.liveThroughput.textContent = fmtLiveMbps(mbps);
           if (both) {
-            document.getElementById("liveDownload").textContent = fmtMbps(bytesRef.down, performance.now() - phaseStart);
-            document.getElementById("liveUpload").textContent = fmtMbps(bytesRef.up, performance.now() - phaseStart);
+            document.getElementById("liveDownload").textContent = fmtLiveMbps(downMbps);
+            document.getElementById("liveUpload").textContent = fmtLiveMbps(upMbps);
           }
         } else el.liveThroughput.textContent = "—";
         stats.durationMs = performance.now() - phaseStart;
         updateLiveExtras(stats);
-        updateGauges(stats.samples[stats.samples.length - 1] || 0, mbps, opts.uploadPhase && !both ? "upload" : "download", both ? (bytesRef.value > 0 ? bytesRef.down / bytesRef.value : 0) : null);
+        updateGauges(stats.samples[stats.samples.length - 1] || 0, mbps, opts.uploadPhase && !both ? "upload" : "download", both ? (mbps > 0 ? downMbps / mbps : 0) : null);
         await delay(PING_EVERY_MS, signal).catch(() => {});
       }
     } finally {
@@ -739,7 +749,7 @@
     let failed = false;
     for (let step = 0; step < 3; step++) {
       const bytesRef = { value: 0 };
-      const stats = await runPhase("warmup", { ...PHASE.warmup, name }, t0, {
+      const stats = await runPhase("warmup", { ...PHASE.warmup, name: name + " · step " + (step + 1) }, t0, {
         durationMs: 2000, idleP50, bytesRef,
         uploadPhase: download ? null : "upload",
         loadFn: () => download ? startDownloadLoad(bytesRef, streams, size) : startUploadLoad(bytesRef, streams, size, "upload"),

@@ -10,7 +10,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=bufferbloat-test
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_MAINTAINER:=OpenWrt Builder <noreply@local>
 PKG_LICENSE:=MIT
@@ -30,6 +30,10 @@ define Package/bufferbloat-test/description
   Serves a browser UI plus /ping /download /upload endpoints.
 endef
 
+define Package/bufferbloat-test/conffiles
+/etc/config/bufferbloat-test
+endef
+
 # Binary is expected at files/usr/bin/bufferbloat-test (cross-compiled outside OpenWrt build).
 define Build/Compile
 	true
@@ -38,6 +42,8 @@ endef
 define Package/bufferbloat-test/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./files/usr/bin/bufferbloat-test $(1)/usr/bin/bufferbloat-test
+	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_CONF) ./files/etc/config/bufferbloat-test $(1)/etc/config/bufferbloat-test
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/bufferbloat-test $(1)/etc/init.d/bufferbloat-test
 endef

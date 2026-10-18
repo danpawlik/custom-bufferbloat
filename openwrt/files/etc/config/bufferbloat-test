@@ -1,0 +1,6 @@
+config service 'main'
+	option listen ':8080'
+	option max_concurrent '1'
+	option download_streams '4'
+	option upload_streams '2'
+	option lock_ttl '90'

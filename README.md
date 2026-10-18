@@ -143,6 +143,8 @@ chmod +x scripts/build-openwrt-binary.sh
 ```bash
 scp openwrt/files/usr/bin/bufferbloat-test root@192.168.1.1:/usr/bin/
 scp openwrt/files/etc/init.d/bufferbloat-test root@192.168.1.1:/etc/init.d/
+# First install only; preserve your existing configuration on upgrades.
+scp openwrt/files/etc/config/bufferbloat-test root@192.168.1.1:/etc/config/
 ssh root@192.168.1.1 'chmod +x /usr/bin/bufferbloat-test /etc/init.d/bufferbloat-test'
 ```
 
@@ -161,6 +163,30 @@ ssh root@192.168.1.1 'chmod +x /usr/bin/bufferbloat-test /etc/init.d/bufferbloat
 4. From a LAN client open `http://<router-ip>:8080` and click **Start test**.
 
 Default listen: `0.0.0.0:8080`, max one concurrent test. Optionally integrate `openwrt/` as an OpenWrt package/feed instead of `scp`.
+
+Service settings live in `/etc/config/bufferbloat-test`, in the named section `main`:
+
+| UCI option | Default | Meaning |
+| --- | --- | --- |
+| `listen` | `:8080` | Bind address and port |
+| `max_concurrent` | `1` | Simultaneous test sessions |
+| `download_streams` | `4` | Initial download stream count |
+| `upload_streams` | `2` | Initial upload stream count |
+| `lock_ttl` | `90` | Session expiry in seconds; positive integer |
+
+Counts must be positive integers. Calibration still caps browser/CLI streams at five
+for download, three for upload, and five total for bidirectional tests.
+
+```sh
+uci set bufferbloat-test.main.listen=':9090'
+uci set bufferbloat-test.main.lock_ttl='120'
+uci commit bufferbloat-test
+/etc/init.d/bufferbloat-test restart
+```
+
+The package preserves this configuration on upgrades and registers a procd config-reload
+trigger. Direct foreground runs use CLI flags instead of UCI. Validate the service wiring
+on a development machine with `python3 scripts/test-openwrt-config.py`.
 
 **Note:** With the server on the router and the browser on LAN, you mostly measure **LAN/Wi‑Fi ↔ router**, not ISP bufferbloat. For ISP-path results, run the server on a **VPS**.
 
@@ -217,6 +243,11 @@ See [load-generator benchmarks](docs/load-generator-benchmark.md) for reproducib
 measurements and the limits of applying them to router/Wi-Fi throughput.
 
 ### Methodology notes
+
+- Live throughput uses byte differences over recent intervals of at least one second.
+  Upload readings change only when fresh server counters arrive; between polls they hold
+  steady. A new phase or calibration step shows **Measuring…** until its first interval.
+  Final results still use total bytes divided by the whole measured phase duration.
 
 - Latency samples use a **Web Worker** so main-thread download/upload work does not fake bufferbloat.
 - **Calibration** tunes download and upload separately, up to three two-second steps each.

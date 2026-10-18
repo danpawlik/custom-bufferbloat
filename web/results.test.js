@@ -83,3 +83,31 @@ test('calibration advisories remain separate from validity and repeat summaries'
   assert.deepEqual(readHistory(JSON.stringify([run])), [run]);
   assert.equal(summarize([run]).download_mbps.count, 1);
 });
+
+test('live rates use recent bytes and hold between fresh samples', () => {
+  const { liveRate } = require('./results.js');
+  const rate = liveRate(0);
+  assert.ok(Number.isNaN(rate(25000000, 250)));
+  assert.equal(rate(100000000, 1000), 800);
+  assert.equal(rate(100000000, 1200), 800);
+  assert.equal(rate(200000000, 2000), 800);
+  assert.equal(rate(201250000, 3000), 10); // A real slowdown is not hidden by the phase average.
+  assert.equal(rate(201250000, 4000), 0);
+  assert.equal(rate(NaN, 5000), 0);
+  assert.ok(Number.isNaN(rate(0, 5000))); // Counter reset starts a fresh interval.
+  assert.equal(rate(100000000, 6000), 800);
+  assert.ok(Number.isNaN(liveRate(6000)(0, 6000))); // New phase has no stale reading.
+});
+
+test('independent live counters handle delayed upload samples without fake dips', () => {
+  const { liveRate } = require('./results.js');
+  const down = liveRate(0), up = liveRate(0);
+  assert.equal(down(100000000, 1000), 800);
+  let upload = up(12500000, 1000);
+  assert.equal(upload, 100);
+  // Download updates cannot advance the upload clock between server polls.
+  assert.equal(down(200000000, 2000) + upload, 900);
+  upload = up(37500000, 3000);
+  assert.equal(upload, 100);
+  assert.equal(up(37500000, 4000), 0); // Fresh unchanged counter means a real stall.
+});

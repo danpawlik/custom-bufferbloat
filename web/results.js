@@ -10,6 +10,20 @@
     download_loss_pct: "Download probe loss (%)", upload_loss_pct: "Upload probe loss (%)",
     bidir_loss_pct: "Both probe loss (%)", recovery_ms: "Recovery (ms)",
   };
+  // Hold the last complete interval until another fresh counter sample is available.
+  function liveRate(startTime) {
+    let previousTime = startTime, previousBytes = 0, mbps = NaN;
+    return (bytes, now) => {
+      if (!Number.isFinite(bytes) || !Number.isFinite(now) || now <= previousTime) return mbps;
+      if (bytes < previousBytes) {
+        previousBytes = bytes; previousTime = now; mbps = NaN;
+      } else if (now - previousTime >= 1000) {
+        mbps = (bytes - previousBytes) * 8 / (now - previousTime) / 1000;
+        previousBytes = bytes; previousTime = now;
+      }
+      return mbps;
+    };
+  }
   function quality(idle, loaded, down, up) {
     const reasons = [];
     if (idle.samples.length < 5 || loaded.samples.length < 5) reasons.push("fewer than 5 latency samples");
@@ -79,7 +93,7 @@
     }
     return summary;
   }
-  const api = { fields, quality, recovery, csv, readHistory, calibrationStatus, saturationWarnings, summarize };
+  const api = { liveRate, fields, quality, recovery, csv, readHistory, calibrationStatus, saturationWarnings, summarize };
   if (typeof module !== "undefined") module.exports = api;
   else globalThis.TestResults = api;
 })();
