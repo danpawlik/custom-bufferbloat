@@ -162,7 +162,26 @@ ssh root@192.168.1.1 'chmod +x /usr/bin/bufferbloat-test /etc/init.d/bufferbloat
 
 4. From a LAN client open `http://<router-ip>:8080` and click **Start test**.
 
-Default listen: `0.0.0.0:8080`, max one concurrent test. Optionally integrate `openwrt/` as an OpenWrt package/feed instead of `scp`.
+Default listen: `0.0.0.0:8080`, max one concurrent test.
+
+To build a package instead of copying a binary, add this repository as a feed. The package
+builds the Go binary with the OpenWrt `golang/host` toolchain, so no Go is needed on the
+build host and the binary matches the target architecture:
+
+```bash
+cp feeds.conf.default feeds.conf
+echo 'src-git my https://github.com/danpawlik/custom-bufferbloat.git' >> feeds.conf
+./scripts/feeds update my && ./scripts/feeds install -a
+make -j1 V=s package/feeds/my/openwrt/compile
+# result: bin/packages/<arch>/my/bufferbloat-test-<version>.apk
+```
+
+The `packages` feed must be available (it provides `lang/golang`). For the `scp` path
+above, cross-compile first:
+
+```bash
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o openwrt/files/usr/bin/bufferbloat-test ./cmd/server
+```
 
 Service settings live in `/etc/config/bufferbloat-test`, in the named section `main`:
 

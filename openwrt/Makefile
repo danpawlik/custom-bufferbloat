@@ -1,21 +1,35 @@
 # OpenWrt package for self-hosted bufferbloat test.
-# Drop this directory into a feed (or copy into package/) and:
-#   make package/bufferbloat-test/compile
 #
-# Pre-build a static binary for your target, e.g.:
-#   GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o openwrt/files/usr/bin/bufferbloat-test ./cmd/server
-#   GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -o openwrt/files/usr/bin/bufferbloat-test ./cmd/server
+# Use as a feed:
+#   cp feeds.conf.default feeds.conf
+#   echo 'src-git my https://github.com/danpawlik/custom-bufferbloat.git' >> feeds.conf
+#   ./scripts/feeds update my && ./scripts/feeds install -a
+#   make package/feeds/my/openwrt/compile V=s
+#
+# Builds the Go binary with the OpenWrt golang/host toolchain (from the
+# packages feed), so no Go is needed on the build host and the result
+# matches the target architecture.
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=bufferbloat-test
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_MAINTAINER:=OpenWrt Builder <noreply@local>
 PKG_LICENSE:=MIT
 
+PKG_BUILD_DEPENDS:=golang/host
+PKG_BUILD_PARALLEL:=1
+
+# The Go module lives at the repository root; this Makefile is in openwrt/.
+GO_PKG:=github.com/openwrt-builder/custom-bufferbloat
+GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/server
+# Web assets are embedded, so they must be copied into the Go build tree too.
+GO_PKG_INSTALL_ALL:=1
+
 include $(INCLUDE_DIR)/package.mk
+include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
 define Package/bufferbloat-test
   SECTION:=net
@@ -34,14 +48,17 @@ define Package/bufferbloat-test/conffiles
 /etc/config/bufferbloat-test
 endef
 
-# Binary is expected at files/usr/bin/bufferbloat-test (cross-compiled outside OpenWrt build).
-define Build/Compile
-	true
+# PKG_BUILD_DIR is this openwrt/ subdirectory's copy; the Go sources are one level up.
+define Build/Prepare
+	$(INSTALL_DIR) $(PKG_BUILD_DIR)
+	$(CP) $(CURDIR)/../go.mod $(PKG_BUILD_DIR)/
+	$(CP) $(CURDIR)/../cmd $(CURDIR)/../internal $(CURDIR)/../web $(PKG_BUILD_DIR)/
 endef
 
+# 'go install' names the binary after its directory (server), so rename it here.
 define Package/bufferbloat-test/install
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) ./files/usr/bin/bufferbloat-test $(1)/usr/bin/bufferbloat-test
+	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/server $(1)/usr/bin/bufferbloat-test
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./files/etc/config/bufferbloat-test $(1)/etc/config/bufferbloat-test
 	$(INSTALL_DIR) $(1)/etc/init.d
