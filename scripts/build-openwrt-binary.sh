@@ -15,7 +15,11 @@ case "$ARCH" in
     export GOARCH=arm GOARM=7
     unset GOMIPS
     ;;
-  mipsle)
+  mips|mips32)
+    export GOARCH=mips GOMIPS=softfloat
+    unset GOARM
+    ;;
+  mipsle|mipsel)
     export GOARCH=mipsle GOMIPS=softfloat
     unset GOARM
     ;;
@@ -23,12 +27,17 @@ case "$ARCH" in
     export GOARCH=amd64
     unset GOARM GOMIPS
     ;;
+  riscv64)
+    export GOARCH=riscv64
+    unset GOARM GOMIPS
+    ;;
   *)
-    echo "usage: $0 [arm64|armv7|mipsle|amd64]" >&2
+    echo "usage: $0 [arm64|armv7|mips|mipsle|amd64|riscv64]" >&2
     exit 1
     ;;
 esac
 
 export GOOS=linux CGO_ENABLED=0
-go build -trimpath -ldflags="-s -w" -o "$OUT/bufferbloat-test" "$ROOT/cmd/server"
-echo "wrote $OUT/bufferbloat-test ($GOOS/$GOARCH)"
+go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$OUT/bufferbloat-test" "$ROOT/cmd/server"
+ls -lh "$OUT/bufferbloat-test"
+echo "wrote $OUT/bufferbloat-test ($GOOS/$GOARCH${GOARM:+/GOARM=$GOARM}${GOMIPS:+/GOMIPS=$GOMIPS})"

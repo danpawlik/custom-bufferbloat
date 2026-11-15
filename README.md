@@ -134,7 +134,7 @@ Starting stream counts are bounded to 1–5 download and 1–3 upload.
 
 ```bash
 chmod +x scripts/build-openwrt-binary.sh
-./scripts/build-openwrt-binary.sh arm64   # or armv7 / mipsle / amd64
+./scripts/build-openwrt-binary.sh arm64   # or armv7 / mips / mipsle / amd64 / riscv64
 # writes openwrt/files/usr/bin/bufferbloat-test
 ```
 
@@ -230,11 +230,10 @@ Upload uses fewer parallel streams by default: generating/sending bodies is **cl
 ## Development
 
 ```bash
-go test -race ./...
-go vet ./...
-node --test web/*.test.js
-go build -trimpath -ldflags="-s -w" -o bufferbloat-test ./cmd/server
-go build -trimpath -ldflags="-s -w" -o bufferbloat-test-cli ./cmd/cli
+make test   # go test -race + node --test
+make vet    # go vet ./...
+make bench  # BenchmarkTransfer over loopback
+make build  # stripped server + cli binaries
 ```
 
 Stripped server binary is ~6 MiB (OK on modern OpenWrt boards; tight on tiny flash).

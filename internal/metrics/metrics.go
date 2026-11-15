@@ -102,7 +102,8 @@ func LossPercent(failed, total int) float64 {
 }
 
 // JitterMs applies RFC 3550's 1/16 smoothing to consecutive successful RTT differences.
-// This is smoothed RTT variability, not RTP interarrival jitter. Each phase starts at zero.
+// This is smoothed RTT variability, not RTP interarrival jitter. Each phase starts at zero
+// (short phases < ~8 samples under-report; compare equal-length phases).
 func JitterMs(samples []float64) float64 {
 	if len(samples) < 2 {
 		return math.NaN()

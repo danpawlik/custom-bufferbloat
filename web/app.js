@@ -507,7 +507,7 @@
             if (!r.ok || !r.body) {
               bytesRef.errors += 1;
               if (r.body) await r.body.cancel();
-              await new Promise((res) => setTimeout(res, 100));
+              await delay(100, ac.signal).catch(() => {});
               continue;
             }
             const reader = r.body.getReader();
@@ -520,7 +520,7 @@
           } catch (_) {
             if (ac.signal.aborted) return;
             bytesRef.errors += 1;
-            await new Promise((r) => setTimeout(r, 50));
+            await delay(50, ac.signal).catch(() => {});
           }
         }
       })());
@@ -571,12 +571,12 @@
             } else {
               bytesRef.errors += 1;
               if (r.body) await r.body.cancel();
-              await new Promise(r => setTimeout(r, 100));
+              await delay(100, ac.signal).catch(() => {});
             }
           } catch (_) {
             if (ac.signal.aborted) return;
             bytesRef.errors += 1;
-            await new Promise((r) => setTimeout(r, 50));
+            await delay(50, ac.signal).catch(() => {});
           }
         }
       })());

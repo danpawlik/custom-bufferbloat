@@ -133,11 +133,11 @@ func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
 	deadline := time.Now().Add(downloadTimeout)
 
 	remaining := size
-	for remaining > 0 {
+	for i := 0; remaining > 0; i++ {
 		if err := ctx.Err(); err != nil {
 			return
 		}
-		if time.Now().After(deadline) {
+		if i%16 == 0 && time.Now().After(deadline) {
 			return
 		}
 		n := chunkSize

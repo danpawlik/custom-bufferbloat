@@ -3,7 +3,7 @@
 #   make package/bufferbloat-test/compile
 #
 # Pre-build a static binary for your target, e.g.:
-#   GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o openwrt/files/usr/bin/bufferbloat-test ./cmd/server
+#   GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o openwrt/files/usr/bin/bufferbloat-test ./cmd/server
 #   GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -o openwrt/files/usr/bin/bufferbloat-test ./cmd/server
 
 include $(TOPDIR)/rules.mk
