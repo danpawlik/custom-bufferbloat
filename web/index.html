@@ -60,6 +60,10 @@
             </div>
           </div>
         </fieldset>
+        <label class="repeat-option" for="udpProbes">
+          <input id="udpProbes" type="checkbox" aria-describedby="udpHelp" />
+          <span><strong>UDP probes (100 kbps)</strong><span id="udpHelp">Off by default — needs server -udp-listen :8081. Via HTTP-proxied UDP ping (browser cannot send raw UDP).</span></span>
+        </label>
         <p id="testCost" class="field-help">Tests use your connection at full speed. Keep this tab visible.</p>
       </details>
       <div class="hero-actions" id="heroStage">
@@ -113,6 +117,7 @@
             <span>Probe loss <strong id="liveLoss">—</strong></span>
             <span title="RTT differences smoothed with a 1/16 weight; not RTP interarrival jitter">Smoothed RTT jitter <strong id="liveJitter">—</strong></span>
             <span>RPM <strong id="liveRpm">—</strong></span>
+            <span id="liveUdpRow" hidden>UDP rtt <strong id="liveUdp">—</strong> · loss <strong id="liveUdpLoss">—</strong></span>
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/openwrt-builder/custom-bufferbloat/internal/handlers"
 	"github.com/openwrt-builder/custom-bufferbloat/internal/lock"
+	"github.com/openwrt-builder/custom-bufferbloat/internal/udpecho"
 	"github.com/openwrt-builder/custom-bufferbloat/web"
 )
 
@@ -19,10 +21,20 @@ func main() {
 	streams := flag.Int("download-streams", envInt("DOWNLOAD_STREAMS", 4), "suggested parallel download streams for UI")
 	upStreams := flag.Int("upload-streams", envInt("UPLOAD_STREAMS", 2), "suggested parallel upload streams for UI (keep low to reduce client CPU)")
 	lockTTL := flag.Duration("lock-ttl", 90*time.Second, "test lock TTL (full run is ~45–60s)")
+	udpListen := flag.String("udp-listen", envOr("UDP_LISTEN", ""), "UDP echo listen address (empty=disabled), e.g. :8081")
 	flag.Parse()
 
 	l := lock.New(*maxConcurrent, *lockTTL)
 	api := handlers.New(l, *streams, *upStreams, *maxConcurrent)
+	api.UDPAddr = *udpListen
+	if *udpListen != "" {
+		go func() {
+			log.Printf("udp echo listening on %s", *udpListen)
+			if err := udpecho.Run(context.Background(), *udpListen); err != nil {
+				log.Printf("udp echo: %v", err)
+			}
+		}()
+	}
 
 	mux := http.NewServeMux()
 	api.Routes(mux)

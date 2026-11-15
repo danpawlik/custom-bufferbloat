@@ -8,13 +8,14 @@ USE_PROCD=1
 PROG=/usr/bin/bufferbloat-test
 
 start_service() {
-	local listen max_concurrent download_streams upload_streams lock_ttl value
+	local listen max_concurrent download_streams upload_streams lock_ttl udp_listen value
 	config_load bufferbloat-test
 	config_get listen main listen ':8080'
 	config_get max_concurrent main max_concurrent 1
 	config_get download_streams main download_streams 4
 	config_get upload_streams main upload_streams 2
 	config_get lock_ttl main lock_ttl 90
+	config_get udp_listen main udp_listen ''
 	for value in "$max_concurrent" "$download_streams" "$upload_streams" "$lock_ttl"; do
 		case "$value" in
 			''|*[!0-9]*|0*) echo 'bufferbloat-test: counts and lock_ttl must be positive integers without leading zeros' >&2; return 1 ;;
@@ -22,7 +23,7 @@ start_service() {
 	done
 
 	procd_open_instance
-	procd_set_param command "$PROG" -listen "$listen" \
+	procd_set_param command "$PROG" -listen "$listen" -udp-listen "$udp_listen" \
 		-max-concurrent "$max_concurrent" -download-streams "$download_streams" \
 		-upload-streams "$upload_streams" -lock-ttl "${lock_ttl}s"
 	procd_set_param respawn

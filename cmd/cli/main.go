@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -36,6 +39,19 @@ type probeStats struct {
 	stoppedAt       time.Time
 }
 
+type udpStats struct {
+	samples  []float64
+	attempts int
+	failures int
+}
+
+var (
+	udpEnabled bool
+	udpAddr    string
+	udpPPS     = 50
+	udpSize    = 250 // 250*50*8=100kbps
+)
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -53,7 +69,16 @@ func run() error {
 	repeat := flag.Bool("repeat", false, "run three tests with 10-second cooldowns")
 	expectedDown := flag.Float64("expected-download", 0, "expected download Mbps (0 disables comparison)")
 	expectedUp := flag.Float64("expected-upload", 0, "expected upload Mbps (0 disables comparison)")
+	udpFlag := flag.Bool("udp", false, "include UDP probes at ~100kbps (requires server -udp-listen)")
+	udpAddrFlag := flag.String("udp-addr", "", "UDP echo address (default host:8081)")
 	flag.Parse()
+	udpEnabled = *udpFlag
+	if udpEnabled {
+		udpAddr = *udpAddrFlag
+		if udpAddr == "" {
+			udpAddr = deriveUDPAddr(*baseURL)
+		}
+	}
 	for _, speed := range []float64{*expectedDown, *expectedUp} {
 		if speed < 0 || math.IsNaN(speed) || math.IsInf(speed, 0) {
 			return fmt.Errorf("expected speeds must be finite and nonnegative")
@@ -126,7 +151,7 @@ func repeatRuns(ctx context.Context, count int, cooldown time.Duration, once fun
 	return runs, nil
 }
 
-var summaryKeys = []string{"idle_p50_ms", "download_mbps", "upload_mbps", "download_inc_ms", "upload_inc_ms", "bidir_inc_ms", "bidir_download_mbps", "bidir_upload_mbps", "download_loss_pct", "upload_loss_pct", "bidir_loss_pct", "recovery_ms"}
+var summaryKeys = []string{"idle_p50_ms", "download_mbps", "upload_mbps", "download_inc_ms", "upload_inc_ms", "bidir_inc_ms", "bidir_download_mbps", "bidir_upload_mbps", "download_loss_pct", "upload_loss_pct", "bidir_loss_pct", "recovery_ms", "download_udp_loss_pct", "download_udp_rtt_p50_ms", "upload_udp_loss_pct", "upload_udp_rtt_p50_ms", "bidir_udp_loss_pct", "bidir_udp_rtt_p50_ms"}
 
 func summarizeRuns(runs []map[string]any) map[string]metrics.Spread {
 	summary := map[string]metrics.Spread{}
@@ -171,11 +196,30 @@ func runOnce(ctx context.Context, client *http.Client, baseURL string, downStrea
 		rpmBudget = 80
 	}
 
-	downBytes, downDur, down := runLoad(ctx, client, baseURL, sessionID, bestStreams, bestChunk, 8*time.Second, true, rpmBudget)
+	runLoadWithUDP := func(d time.Duration, fn func() (int64, time.Duration, probeStats)) (int64, time.Duration, probeStats, udpStats) {
+		if !udpEnabled {
+			b, dur, st := fn()
+			return b, dur, st, udpStats{}
+		}
+		uCtx, uCancel := context.WithTimeout(ctx, d)
+		defer uCancel()
+		uCh := make(chan udpStats, 1)
+		go func() { uCh <- collectUDP(uCtx, udpAddr) }()
+		b, dur, st := fn()
+		uCancel()
+		return b, dur, st, <-uCh
+	}
+	downBytes, downDur, down, downUDP := runLoadWithUDP(8*time.Second, func() (int64, time.Duration, probeStats) {
+		return runLoad(ctx, client, baseURL, sessionID, bestStreams, bestChunk, 8*time.Second, true, rpmBudget)
+	})
 	_ = sampleProbes(ctx, client, baseURL, sessionID, 1*time.Second)
-	upBytes, upDur, upStats := runLoad(ctx, client, baseURL, sessionID, up, upCalibration.chunk, 8*time.Second, false, rpmBudget)
+	upBytes, upDur, upStats, upUDP := runLoadWithUDP(8*time.Second, func() (int64, time.Duration, probeStats) {
+		return runLoad(ctx, client, baseURL, sessionID, up, upCalibration.chunk, 8*time.Second, false, rpmBudget)
+	})
 	_ = sampleProbes(ctx, client, baseURL, sessionID, 1*time.Second)
-	biBytes, biDur, bi := runLoadBi(ctx, client, baseURL, sessionID, biDown, biUp, bestChunk, upCalibration.chunk, 8*time.Second, rpmBudget)
+	biBytes, biDur, bi, biUDP := runLoadWithUDP(8*time.Second, func() (int64, time.Duration, probeStats) {
+		return runLoadBi(ctx, client, baseURL, sessionID, biDown, biUp, bestChunk, upCalibration.chunk, 8*time.Second, rpmBudget)
+	})
 	recoveryOffset := time.Since(bi.stoppedAt)
 	recovery := sampleProbes(ctx, client, baseURL, sessionID, 4*time.Second)
 	for i := range recovery.sampleTimes {
@@ -245,6 +289,14 @@ func runOnce(ctx context.Context, client *http.Client, baseURL string, downStrea
 		"bidir_download_mbps":    round1(metrics.Mbps(bi.downBytes, float64(biDur.Milliseconds()))),
 		"bidir_upload_mbps":      round1(metrics.Mbps(bi.upBytes, float64(biDur.Milliseconds()))),
 	}
+	if udpEnabled {
+		for prefix, st := range map[string]udpStats{"download": downUDP, "upload": upUDP, "bidir": biUDP} {
+			result[prefix+"_udp_loss_pct"] = round1(metrics.LossPercent(st.failures, st.attempts))
+			result[prefix+"_udp_jitter_ms"] = round1(metrics.JitterMs(st.samples))
+			result[prefix+"_udp_rtt_p50_ms"] = round1(metrics.Percentile(st.samples, 50))
+			result[prefix+"_udp_rtt_p90_ms"] = round1(metrics.Percentile(st.samples, 90))
+		}
+	}
 
 	return result, nil
 }
@@ -262,6 +314,9 @@ func printResult(result map[string]any) {
 	}
 	for _, direction := range []string{"download", "upload", "bidir"} {
 		fmt.Printf("%s: +%.1f ms @ %.1f Mbps · loss %.1f%% · smoothed RTT jitter %.1f ms · RPM %.0f\n", direction, result[direction+"_inc_ms"], result[direction+"_mbps"], result[direction+"_loss_pct"], result[direction+"_jitter_ms"], result[direction+"_rpm"])
+		if udpEnabled {
+			fmt.Printf("  udp %s: rtt p50 %.1f ms p90 %.1f ms · loss %.1f%% · jitter %.1f ms\n", direction, result[direction+"_udp_rtt_p50_ms"], result[direction+"_udp_rtt_p90_ms"], result[direction+"_udp_loss_pct"], result[direction+"_udp_jitter_ms"])
+		}
 	}
 	fmt.Printf("Both directions: down %.1f Mbps / up %.1f Mbps\n", result["bidir_download_mbps"], result["bidir_upload_mbps"])
 	if math.IsNaN(result["recovery_ms"].(float64)) {
@@ -584,4 +639,63 @@ func runLoadBi(parent context.Context, c *http.Client, base, sessionID string, d
 	}
 	st.loadErrors = loadErrors.Load()
 	return st.downBytes + st.upBytes, st.duration, st
+}
+
+func deriveUDPAddr(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return "127.0.0.1:8081"
+	}
+	host := u.Hostname()
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := u.Port()
+	if port != "" {
+		if n, err := net.LookupPort("tcp", port); err == nil {
+			return net.JoinHostPort(host, fmt.Sprintf("%d", n+1))
+		}
+	}
+	return net.JoinHostPort(host, "8081")
+}
+
+func collectUDP(ctx context.Context, addr string) udpStats {
+	var st udpStats
+	conn, err := net.Dial("udp", addr)
+	if err != nil {
+		return st
+	}
+	defer conn.Close()
+	interval := time.Second / time.Duration(udpPPS)
+	if interval <= 0 {
+		interval = 20 * time.Millisecond
+	}
+	payload := make([]byte, udpSize)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return st
+		case <-ticker.C:
+		}
+		seq := uint32(st.attempts)
+		binary.BigEndian.PutUint32(payload[0:4], seq)
+		binary.BigEndian.PutUint64(payload[4:12], uint64(time.Now().UnixNano()))
+		st.attempts++
+		_ = conn.SetDeadline(time.Now().Add(800 * time.Millisecond))
+		t0 := time.Now()
+		if _, err := conn.Write(payload); err != nil {
+			st.failures++
+			continue
+		}
+		buf := make([]byte, 2048)
+		n, err := conn.Read(buf)
+		if err != nil || n < 4 || binary.BigEndian.Uint32(buf[0:4]) != seq {
+			st.failures++
+			continue
+		}
+		rttMs := float64(time.Since(t0).Microseconds()) / 1000
+		st.samples = append(st.samples, rttMs)
+	}
 }

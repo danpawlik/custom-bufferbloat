@@ -9,6 +9,12 @@
     bidir_download_mbps: "Both: download (Mbps)", bidir_upload_mbps: "Both: upload (Mbps)",
     download_loss_pct: "Download probe loss (%)", upload_loss_pct: "Upload probe loss (%)",
     bidir_loss_pct: "Both probe loss (%)", recovery_ms: "Recovery (ms)",
+    download_udp_loss_pct: "Download UDP loss (%)", download_udp_jitter_ms: "Download UDP jitter (ms)",
+    download_udp_rtt_p50_ms: "Download UDP rtt p50 (ms)", download_udp_rtt_p90_ms: "Download UDP rtt p90 (ms)",
+    upload_udp_loss_pct: "Upload UDP loss (%)", upload_udp_jitter_ms: "Upload UDP jitter (ms)",
+    upload_udp_rtt_p50_ms: "Upload UDP rtt p50 (ms)", upload_udp_rtt_p90_ms: "Upload UDP rtt p90 (ms)",
+    bidir_udp_loss_pct: "Both UDP loss (%)", bidir_udp_jitter_ms: "Both UDP jitter (ms)",
+    bidir_udp_rtt_p50_ms: "Both UDP rtt p50 (ms)", bidir_udp_rtt_p90_ms: "Both UDP rtt p90 (ms)",
   };
   // Hold the last complete interval until another fresh counter sample is available.
   function liveRate(startTime) {

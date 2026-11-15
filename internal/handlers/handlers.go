@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -26,6 +28,7 @@ type Server struct {
 	DownloadStreams int
 	UploadStreams   int
 	MaxConcurrent   int
+	UDPAddr         string
 	downloadBuffer  []byte
 }
 
@@ -63,6 +66,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /test/begin", s.Begin)
 	mux.HandleFunc("POST /test/end", s.End)
 	mux.HandleFunc("GET /api/config", s.Config)
+	mux.HandleFunc("GET /udp/ping", s.UDPPing)
 }
 
 func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +78,62 @@ func (s *Server) Config(w http.ResponseWriter, r *http.Request) {
 		"downloadStreams": s.DownloadStreams,
 		"uploadStreams":   s.UploadStreams,
 		"maxConcurrent":   s.MaxConcurrent,
+		"udpEnabled":      s.UDPAddr != "",
+		"udpAddr":         s.UDPAddr,
 	})
+}
+
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		return xff
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func (s *Server) UDPPing(w http.ResponseWriter, r *http.Request) {
+	if s.UDPAddr == "" {
+		http.Error(w, "udp disabled", http.StatusServiceUnavailable)
+		return
+	}
+	if id := sessionFrom(r); id != "" {
+		_ = s.Lock.Touch(id)
+	}
+	// Minimal probe via loopback UDP to the echo port: browser cannot send raw UDP,
+	// so we proxy a single UDP round-trip server-side to observe UDP loss under load.
+	conn, err := net.Dial("udp", "127.0.0.1:"+udpPort(s.UDPAddr))
+	if err != nil {
+		http.Error(w, "udp dial failed", http.StatusBadGateway)
+		return
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(1500 * time.Millisecond))
+	msg := []byte("udp-ping")
+	t0 := time.Now()
+	if _, err := conn.Write(msg); err != nil {
+		http.Error(w, "udp write failed", http.StatusBadGateway)
+		return
+	}
+	buf := make([]byte, 2048)
+	n, err := conn.Read(buf)
+	if err != nil || n != len(msg) {
+		http.Error(w, "udp loss", http.StatusGatewayTimeout)
+		return
+	}
+	rttMs := float64(time.Since(t0).Microseconds()) / 1000
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"udp": true, "rtt_ms": rttMs})
+}
+
+func udpPort(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return port
 }
 
 func (s *Server) Ping(w http.ResponseWriter, r *http.Request) {
@@ -233,8 +292,10 @@ func (s *Server) Begin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error": "test already running",
 		})
+		log.Printf("test begin rejected: session=%s remote=%s (busy)", body.SessionID, clientIP(r))
 		return
 	}
+	log.Printf("test begin: session=%s remote=%s", body.SessionID, clientIP(r))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionId": body.SessionID})
 }
 
@@ -246,6 +307,7 @@ func (s *Server) End(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Lock.Release(body.SessionID)
+	log.Printf("test end: session=%s remote=%s", body.SessionID, clientIP(r))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

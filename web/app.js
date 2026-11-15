@@ -70,7 +70,9 @@
   const repeatInput = document.getElementById("repeatRuns");
   const expectedDownInput = document.getElementById("expectedDownload");
   const expectedUpInput = document.getElementById("expectedUpload");
+  const udpInput = document.getElementById("udpProbes");
   const runProgress = document.getElementById("repeatStatus");
+  let udpAvailable = false;
   const historyKey = "bufferbloat-runs-v1";
   let history = [];
   try { history = TestResults.readHistory(localStorage.getItem(historyKey)); }
@@ -208,6 +210,12 @@
         if (j.downloadStreams) downloadStreams = j.downloadStreams;
         if (j.uploadStreams) uploadStreams = j.uploadStreams;
         else uploadStreams = Math.max(1, Math.min(2, downloadStreams));
+        udpAvailable = !!j.udpEnabled;
+        if (udpInput) {
+          udpInput.disabled = !udpAvailable;
+          const help = document.getElementById("udpHelp");
+          if (help) help.textContent = udpAvailable ? "Extra ~100 kbps UDP pings via server UDP echo (needs -udp-listen)." : "Server UDP disabled — start with -udp-listen :8081 to enable.";
+        }
       }
     } catch (_) {}
   }
@@ -598,6 +606,17 @@
     if (el.liveRpm) el.liveRpm.textContent = fmtRpm(rpm);
   }
 
+  function udpProbeStats() { return { samples: [], attempts: 0, failures: 0 }; }
+  function updateLiveUdp(udp) {
+    const row = document.getElementById("liveUdpRow");
+    if (!row) return;
+    if (!udp || !udp.attempts) { row.hidden = true; return; }
+    row.hidden = false;
+    const p50 = percentile([...udp.samples].sort((a,b)=>a-b), 50);
+    document.getElementById("liveUdp").textContent = fmtMs(p50);
+    document.getElementById("liveUdpLoss").textContent = fmtPct(lossPercent(udp.failures, udp.attempts));
+  }
+
   function recoveryStableMs(stats, baselineP50, slackMs, need) {
     return TestResults.recovery(stats, baselineP50, slackMs, need);
   }
@@ -644,6 +663,24 @@
     const signal = controller.signal;
     signal.addEventListener("abort", stopLoads, { once: true });
     if (bytesRef) Object.assign(bytesRef, { down: 0, up: 0, errors: 0 });
+    const wantUdp = udpAvailable && udpInput && udpInput.checked;
+    const udp = wantUdp ? udpProbeStats() : null;
+    let udpTimer = null;
+    if (wantUdp) {
+      const tick = async () => {
+        if (signal.aborted) return;
+        const t0 = performance.now();
+        try {
+          const j = await request("/udp/ping?t=" + t0, { cache: "no-store", headers: sessionHeaders() }, signal, 1200);
+          if (signal.aborted) return;
+          udp.attempts++; udp.samples.push(j.rtt_ms ?? (performance.now()-t0));
+        } catch (_) { if (!signal.aborted) { udp.attempts++; udp.failures++; } }
+        updateLiveUdp(udp);
+      };
+      tick();
+      udpTimer = setInterval(tick, 20);
+      signal.addEventListener("abort", () => clearInterval(udpTimer), { once: true });
+    }
     let lastStats = phaseStart;
     const downRate = TestResults.liveRate(phaseStart);
     const upRate = TestResults.liveRate(phaseStart);
@@ -710,6 +747,7 @@
         await delay(PING_EVERY_MS, signal).catch(() => {});
       }
     } finally {
+      if (udpTimer) clearInterval(udpTimer);
       clearTimeout(timer);
       abort();
       stopLoads();
@@ -731,6 +769,7 @@
       stats.upBytes = bytesRef.up;
       stats.loadErrors = bytesRef.errors;
     }
+    if (udp) stats.udp = udp;
     return stats;
   }
 
@@ -861,18 +900,21 @@
         ["Throughput", fmtMbps(downBytes, downMs)],
         ["Probe loss / jitter", fmtPct(lossPercent(down.failures, down.attempts)) + " / " + fmtMs(TestResults.jitterMs(down.samples))],
         ["RPM", fmtRpm(rpmFrom(down.rpmSuccess, down.durationMs))],
+        ...(down.udp ? [["UDP rtt p50 / loss", fmtMs(percentile([...down.udp.samples].sort((a,b)=>a-b),50)) + " / " + fmtPct(lossPercent(down.udp.failures, down.udp.attempts))]] : []),
       ]},
       { title: "Upload — loaded", rows: [
         ["Increase", fmtMs(upInc)],
         ["Throughput", fmtMbps(upBytes, upMs)],
         ["Probe loss / jitter", fmtPct(lossPercent(up.failures, up.attempts)) + " / " + fmtMs(TestResults.jitterMs(up.samples))],
         ["RPM", fmtRpm(rpmFrom(up.rpmSuccess, up.durationMs))],
+        ...(up.udp ? [["UDP rtt p50 / loss", fmtMs(percentile([...up.udp.samples].sort((a,b)=>a-b),50)) + " / " + fmtPct(lossPercent(up.udp.failures, up.udp.attempts))]] : []),
       ]},
       { title: "Bidirectional — loaded", rows: [
         ["Increase", fmtMs(biInc)],
         ["Throughput down / up", fmtMbps(bi.downBytes, biMs) + " / " + fmtMbps(bi.upBytes, biMs)],
         ["Probe loss / jitter", fmtPct(lossPercent(bi.failures, bi.attempts)) + " / " + fmtMs(TestResults.jitterMs(bi.samples))],
         ["RPM", fmtRpm(rpmFrom(bi.rpmSuccess, bi.durationMs))],
+        ...(bi.udp ? [["UDP rtt p50 / loss", fmtMs(percentile([...bi.udp.samples].sort((a,b)=>a-b),50)) + " / " + fmtPct(lossPercent(bi.udp.failures, bi.udp.attempts))]] : []),
       ]},
       { title: "Aggregate", rows: [
         ["Loaded probe loss", fmtPct(loadedLoss)],
@@ -916,6 +958,10 @@
         [name + "_jitter_ms"]: TestResults.jitterMs(stats.samples),
         [name + "_rpm"]: rpmFrom(stats.rpmSuccess, stats.durationMs),
         [name + "_samples"]: stats.samples.length, [name + "_load_errors"]: stats.loadErrors,
+        [name + "_udp_loss_pct"]: stats.udp ? lossPercent(stats.udp.failures, stats.udp.attempts) : NaN,
+        [name + "_udp_jitter_ms"]: stats.udp ? TestResults.jitterMs(stats.udp.samples) : NaN,
+        [name + "_udp_rtt_p50_ms"]: stats.udp ? percentile([...stats.udp.samples].sort((a,b)=>a-b), 50) : NaN,
+        [name + "_udp_rtt_p90_ms"]: stats.udp ? percentile([...stats.udp.samples].sort((a,b)=>a-b), 90) : NaN,
       });
     }
     result.bidir_download_mbps = bi.downBytes * 8 / biMs / 1000;
@@ -1061,7 +1107,7 @@
     document.getElementById("repeatProgressLabel").textContent = "0 of 3 tests completed";
     runController = new AbortController();
     stopButton.hidden = false;
-    for (const input of [labelInput, repeatInput, expectedDownInput, expectedUpInput]) input.disabled = true;
+    for (const input of [labelInput, repeatInput, expectedDownInput, expectedUpInput, document.getElementById("udpProbes")]) if (input) input.disabled = true;
     el.start.disabled = true;
     if (el.heroStage) el.heroStage.classList.add("is-running");
     let completed = 0;
@@ -1087,7 +1133,7 @@
     } finally {
       runController = null;
       stopButton.hidden = true;
-      for (const input of [labelInput, repeatInput, expectedDownInput, expectedUpInput]) input.disabled = false;
+      for (const input of [labelInput, repeatInput, expectedDownInput, expectedUpInput, document.getElementById("udpProbes")]) if (input) input.disabled = false;
       el.start.disabled = false;
       updateSetup();
       if (el.heroStage) el.heroStage.classList.remove("is-running");

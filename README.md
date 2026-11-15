@@ -213,13 +213,17 @@ Use a new session for each run. These in-memory counters are not saved test resu
 
 ```
 -listen :8080
+-udp-listen ""          # e.g. :8081 to enable UDP echo + /udp/ping
 -max-concurrent 1
 -download-streams 4
 -upload-streams 2
 -lock-ttl 90s
 ```
 
-Env overrides: `LISTEN`, `MAX_CONCURRENT`, `DOWNLOAD_STREAMS`, `UPLOAD_STREAMS`.
+Env overrides: `LISTEN`, `UDP_LISTEN`, `MAX_CONCURRENT`, `DOWNLOAD_STREAMS`, `UPLOAD_STREAMS`.
+
+Optional UDP probes at ~100 kbps (VoWiFi-sized packets) for loss/jitter under load:
+`./bufferbloat-test -listen :8080 -udp-listen :8081` (disabled by default). Browser and CLI can then include UDP probes during the scored phases — CLI via `-udp`, browser via the **Test setup** checkbox. CLI defaults to `<host>:8081`; override with `-udp-addr host:port`. Server logs `test begin/end: session=… remote=192.168.1.5` with the client IP.
 
 Upload uses fewer parallel streams by default: generating/sending bodies is **client-CPU heavy** and can inflate latency samples if the browser is saturated.
 

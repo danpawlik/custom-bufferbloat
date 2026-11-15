@@ -4,3 +4,5 @@ config service 'main'
 	option download_streams '4'
 	option upload_streams '2'
 	option lock_ttl '90'
+	option udp_listen ''
+
