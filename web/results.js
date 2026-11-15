@@ -102,7 +102,32 @@
     }
     return summary;
   }
-  const api = { jitterMs, liveRate, fields, quality, recovery, csv, readHistory, calibrationStatus, saturationWarnings, summarize };
+  const GRADE_COLORS = { "A+": "#2ee6c5", "A": "#4ade80", "B": "#5b9dff", "C": "#fbbf24", "D": "#fb923c", "F": "#f87171", "—": "#334155" };
+  function gradeColor(grade) { return GRADE_COLORS[grade] || GRADE_COLORS["—"]; }
+  const GRADE_THRESHOLDS = [
+    { grade: "A+", max: 5 },
+    { grade: "A", max: 30 },
+    { grade: "B", max: 60 },
+    { grade: "C", max: 200 },
+    { grade: "D", max: 400 },
+    { grade: "F", max: Infinity },
+  ];
+  function gradeInfo(increaseMs) {
+    if (!Number.isFinite(increaseMs) || increaseMs < 0) {
+      return { grade: "—", color: GRADE_COLORS["—"], nextGrade: null, marginMs: null, label: "—" };
+    }
+    let idx = GRADE_THRESHOLDS.findIndex(t => increaseMs < t.max);
+    if (idx === -1) idx = GRADE_THRESHOLDS.length - 1;
+    const cur = GRADE_THRESHOLDS[idx];
+    if (cur.grade === "F") {
+      const margin = increaseMs - 400;
+      return { grade: "F", color: GRADE_COLORS["F"], nextGrade: null, marginMs: margin, label: margin.toFixed(1) + " ms over D" };
+    }
+    const next = GRADE_THRESHOLDS[idx + 1];
+    const margin = cur.max - increaseMs;
+    return { grade: cur.grade, color: GRADE_COLORS[cur.grade], nextGrade: next.grade, marginMs: margin, label: margin.toFixed(1) + " ms before " + next.grade };
+  }
+  const api = { jitterMs, liveRate, fields, quality, recovery, csv, readHistory, calibrationStatus, saturationWarnings, summarize, GRADE_COLORS, gradeColor, gradeInfo };
   if (typeof module !== "undefined") module.exports = api;
   else globalThis.TestResults = api;
 })();

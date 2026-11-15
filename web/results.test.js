@@ -131,3 +131,61 @@ test('jitter method survives history and export without relabeling legacy result
   assert.equal(restored[1].jitter_method, 'rtt-ewma-1/16');
   assert.match(csv(restored[1]), /rtt-ewma-1\/16/);
 });
+
+test('grade helpers expose six distinct colors and margin to next grade', () => {
+  const { gradeInfo, gradeColor, GRADE_COLORS } = require('./results.js');
+  assert.equal(GRADE_COLORS['A+'], '#2ee6c5');
+  assert.equal(GRADE_COLORS['A'], '#4ade80');
+  assert.equal(gradeColor('A+'), '#2ee6c5');
+  assert.equal(gradeColor('C'), '#fbbf24');
+  assert.equal(gradeColor('F'), '#f87171');
+  assert.equal(gradeColor('—'), '#334155');
+  let info = gradeInfo(0);
+  assert.equal(info.grade, 'A+');
+  assert.equal(info.color, '#2ee6c5');
+  assert.equal(info.nextGrade, 'A');
+  assert.ok(Math.abs(info.marginMs - 5) < 1e-9);
+  assert.equal(info.label, '5.0 ms before A');
+  info = gradeInfo(4.9);
+  assert.equal(info.grade, 'A+');
+  assert.equal(info.nextGrade, 'A');
+  assert.ok(Math.abs(info.marginMs - 0.1) < 1e-9);
+  info = gradeInfo(5);
+  assert.equal(info.grade, 'A');
+  assert.equal(info.nextGrade, 'B');
+  assert.ok(Math.abs(info.marginMs - 25) < 1e-9);
+  info = gradeInfo(29);
+  assert.equal(info.grade, 'A');
+  assert.equal(info.nextGrade, 'B');
+  info = gradeInfo(30);
+  assert.equal(info.grade, 'B');
+  assert.equal(info.nextGrade, 'C');
+  info = gradeInfo(400);
+  assert.equal(info.grade, 'F');
+  assert.equal(info.nextGrade, null);
+  assert.equal(info.marginMs, 0);
+  assert.equal(info.label, '0.0 ms over D');
+  info = gradeInfo(500);
+  assert.equal(info.grade, 'F');
+  assert.equal(info.marginMs, 100);
+  assert.equal(info.label, '100.0 ms over D');
+  info = gradeInfo(NaN);
+  assert.equal(info.grade, '—');
+  assert.equal(info.color, '#334155');
+  assert.equal(info.nextGrade, null);
+  assert.equal(info.marginMs, null);
+  assert.equal(info.label, '—');
+});
+
+test('withheld grade handles Infinity and negative as incomplete', () => {
+  const { gradeInfo } = require('./results.js');
+  for (const v of [Infinity, -Infinity, -1, -0.1]) {
+    const info = gradeInfo(v);
+    assert.equal(info.grade, '—');
+    assert.equal(info.marginMs, null);
+    assert.equal(info.label, '—');
+  }
+  const finfo = gradeInfo(500);
+  assert.equal(finfo.grade, 'F');
+  assert.ok(finfo.marginMs > 0);
+});

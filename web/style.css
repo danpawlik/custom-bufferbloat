@@ -16,6 +16,13 @@
   --font: "Syne", "Avenir Next", "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
   --radius: 18px;
+  --g-A-plus: #2ee6c5;
+  --g-A: #4ade80;
+  --g-B: #5b9dff;
+  --g-C: #fbbf24;
+  --g-D: #fb923c;
+  --g-F: #f87171;
+  --g-none: #334155;
 }
 
 * { box-sizing: border-box; }
@@ -61,7 +68,7 @@ body {
 .wrap {
   position: relative;
   z-index: 1;
-  max-width: 980px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 2.25rem 1.25rem 3.5rem;
 }
@@ -402,16 +409,25 @@ body {
 }
 
 .medal {
+  --grade-color: var(--g-none);
+  --ring-pct: 0;
   background:
-    radial-gradient(circle at 50% 20%, rgba(46, 230, 197, 0.18), transparent 55%),
+    radial-gradient(circle at 50% 20%, color-mix(in srgb, var(--grade-color) 14%, transparent), transparent 60%),
     var(--panel-2);
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--grade-color) 18%, var(--line));
   border-radius: 16px;
   padding: 1.4rem 1rem;
   text-align: center;
   position: relative;
   overflow: hidden;
 }
+.medal.grade-A-plus { --grade-color: var(--g-A-plus); }
+.medal.grade-A { --grade-color: var(--g-A); }
+.medal.grade-B { --grade-color: var(--g-B); }
+.medal.grade-C { --grade-color: var(--g-C); }
+.medal.grade-D { --grade-color: var(--g-D); }
+.medal.grade-F { --grade-color: var(--g-F); }
+.medal.grade-none { --grade-color: var(--g-none); }
 
 .medal .grade {
   display: block;
@@ -420,19 +436,30 @@ body {
   letter-spacing: -0.04em;
   line-height: 1;
   margin: 0.35rem 0;
-  background: linear-gradient(180deg, #fff, var(--accent));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--grade-color);
+  background: none;
   animation: gradePop 0.55s cubic-bezier(0.2, 0.9, 0.2, 1);
 }
-
-.medal.grade-A-plus .grade,
-.medal.grade-A .grade { background: linear-gradient(180deg, #fff, #2ee6c5); -webkit-background-clip: text; background-clip: text; }
-.medal.grade-B .grade { background: linear-gradient(180deg, #fff, #5b9dff); -webkit-background-clip: text; background-clip: text; }
-.medal.grade-C .grade { background: linear-gradient(180deg, #fff, #ffb020); -webkit-background-clip: text; background-clip: text; }
-.medal.grade-D .grade,
-.medal.grade-F .grade { background: linear-gradient(180deg, #fff, #ff5c5c); -webkit-background-clip: text; background-clip: text; }
+.medal .grade-ring {
+  width: 118px;
+  height: 118px;
+  border-radius: 50%;
+  margin: 0 auto 0.4rem;
+  padding: 5px;
+  background: conic-gradient(var(--grade-color) calc(var(--ring-pct) * 1%), var(--line) 0);
+  display: grid;
+  place-items: center;
+}
+.medal .grade-ring .grade {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--panel-2);
+  display: grid;
+  place-items: center;
+  font-size: clamp(2.4rem, 7vw, 3.2rem);
+}
 
 @keyframes gradePop {
   from { transform: scale(0.7); opacity: 0; }
@@ -445,12 +472,20 @@ body {
 }
 
 .grade-card {
+  --grade-color: var(--g-none);
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 1rem;
   text-align: center;
 }
+.grade-card.grade-A-plus { --grade-color: var(--g-A-plus); background: color-mix(in srgb, var(--g-A-plus) 10%, var(--panel-2)); border-color: color-mix(in srgb, var(--g-A-plus) 22%, var(--line)); }
+.grade-card.grade-A { --grade-color: var(--g-A); background: color-mix(in srgb, var(--g-A) 10%, var(--panel-2)); border-color: color-mix(in srgb, var(--g-A) 22%, var(--line)); }
+.grade-card.grade-B { --grade-color: var(--g-B); background: color-mix(in srgb, var(--g-B) 10%, var(--panel-2)); border-color: color-mix(in srgb, var(--g-B) 22%, var(--line)); }
+.grade-card.grade-C { --grade-color: var(--g-C); background: color-mix(in srgb, var(--g-C) 10%, var(--panel-2)); border-color: color-mix(in srgb, var(--g-C) 22%, var(--line)); }
+.grade-card.grade-D { --grade-color: var(--g-D); background: color-mix(in srgb, var(--g-D) 10%, var(--panel-2)); border-color: color-mix(in srgb, var(--g-D) 22%, var(--line)); }
+.grade-card.grade-F { --grade-color: var(--g-F); background: color-mix(in srgb, var(--g-F) 10%, var(--panel-2)); border-color: color-mix(in srgb, var(--g-F) 22%, var(--line)); }
+.grade-card.grade-none { --grade-color: var(--g-none); }
 
 .dir-icon {
   display: inline-flex;
@@ -468,10 +503,18 @@ body {
 
 .grade-card .grade {
   display: block;
-  margin: 0.25rem 0 0.7rem;
+  margin: 0.25rem 0 0.3rem;
   font-size: 2rem;
   font-weight: 800;
   font-family: var(--font);
+  color: var(--grade-color);
+}
+.grade-card .grade-numbers {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-bottom: 0.55rem;
 }
 
 .bloat-meter {
@@ -496,10 +539,46 @@ body {
   font-size: 0.78rem;
   color: var(--muted);
 }
+.grade-scale {
+  display: flex;
+  gap: 4px;
+  margin-top: 0.55rem;
+}
+.grade-scale-seg {
+  flex: 1;
+  height: 6px;
+  border-radius: 99px;
+  background: #18222c;
+}
+.grade-scale-seg.filled {
+  background: var(--grade-color);
+}
+.grade-margin {
+  display: block;
+  margin-top: 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
 
 .cards {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+.cards-section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 0.45rem;
+  border-left: 2px solid var(--line);
+  padding-left: 0.6rem;
+}
+.cards-section-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 0.65rem;
 }
 

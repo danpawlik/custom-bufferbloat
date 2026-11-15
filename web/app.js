@@ -449,7 +449,8 @@
     if (g === "C") return "grade-C";
     if (g === "D") return "grade-D";
     if (g === "F") return "grade-F";
-    return "";
+    if (g === "—") return "grade-none";
+    return "grade-none";
   }
 
   function gradeCaption(g) {
@@ -801,14 +802,41 @@
     el.gradeUp.textContent = gUp;
     if (el.gradeBi) el.gradeBi.textContent = gBi;
     if (el.gradeCaption) el.gradeCaption.textContent = gradeCaption(gAll);
-    if (el.gradeOverallCard) el.gradeOverallCard.className = "medal " + gradeClass(gAll);
+    if (el.gradeOverallCard) {
+      el.gradeOverallCard.className = "medal " + gradeClass(gAll);
+      const ringPct = gAll === "—" ? 0 : (() => {
+        const worseInc = [downInc, upInc, biInc].filter(v => Number.isFinite(v) && v >= 0).reduce((a, b) => Math.max(a, b), NaN);
+        return Number.isFinite(worseInc) ? Math.min(100, (worseInc / 400) * 100) : 0;
+      })();
+      el.gradeOverallCard.style.setProperty("--ring-pct", String(ringPct));
+    }
 
-    if (el.bloatDown) el.bloatDown.style.width = bloatWidth(downInc) + "%";
-    if (el.bloatUp) el.bloatUp.style.width = bloatWidth(upInc) + "%";
-    if (el.bloatBi) el.bloatBi.style.width = bloatWidth(biInc) + "%";
-    if (el.bloatDownLabel) el.bloatDownLabel.textContent = "bloat +" + fmtMs(downInc);
-    if (el.bloatUpLabel) el.bloatUpLabel.textContent = "bloat +" + fmtMs(upInc);
-    if (el.bloatBiLabel) el.bloatBiLabel.textContent = "bloat +" + fmtMs(biInc);
+    function setCard(cardId, grade, inc, loadedSamples) {
+      const card = document.getElementById(cardId);
+      if (card) card.className = "grade-card " + gradeClass(grade);
+      const info = TestResults.gradeInfo(grade === "—" ? NaN : inc);
+      const idleP5 = percentile(idleSorted, 5);
+      const loadedSorted = [...loadedSamples].sort((a, b) => a - b);
+      const loadedP90 = percentile(loadedSorted, 90);
+      const numbersEl = document.getElementById(cardId === "gradeDown" ? "numbersDown" : cardId === "gradeUp" ? "numbersUp" : "numbersBi");
+      if (numbersEl) {
+        if (Number.isFinite(idleP5) && Number.isFinite(loadedP90)) numbersEl.textContent = fmtMs(idleP5) + " → " + fmtMs(loadedP90) + " · +" + fmtMs(inc);
+        else if (Number.isFinite(inc)) numbersEl.textContent = "+" + fmtMs(inc);
+        else numbersEl.textContent = "—";
+      }
+      const scaleId = cardId === "gradeDown" ? "scaleDown" : cardId === "gradeUp" ? "scaleUp" : "scaleBi";
+      const scale = document.getElementById(scaleId);
+      if (scale) {
+        const rank = { "A+": 0, "A": 1, "B": 2, "C": 3, "D": 4, "F": 5, "—": -1 }[grade] ?? -1;
+        [...scale.children].forEach((seg, i) => seg.classList.toggle("filled", i <= rank));
+      }
+      const marginId = cardId === "gradeDown" ? "marginDown" : cardId === "gradeUp" ? "marginUp" : "marginBi";
+      const marginEl = document.getElementById(marginId);
+      if (marginEl) marginEl.textContent = info.label;
+    }
+    setCard("gradeDown", gDown, downInc, down.samples);
+    setCard("gradeUp", gUp, upInc, up.samples);
+    setCard("gradeBi", gBi, biInc, bi.samples);
 
     const recUntil = recoveryStableMs(recovery, idleP50, 5, 3);
     const loadedLoss = lossPercent(
@@ -820,34 +848,47 @@
       down.durationMs + up.durationMs + bi.durationMs
     );
 
-    const rows = [
-      ["Idle p50 / p95", fmtMs(idleP50) + " / " + fmtMs(percentile(idleSorted, 95))],
-      ["Download calibration", warmup.streams + "× · " + warmup.mbps.toFixed(1) + " Mbps · " + warmup.status],
-      ["Upload calibration", uploadWarmup.streams + "× · " + uploadWarmup.mbps.toFixed(1) + " Mbps · " + uploadWarmup.status],
-      ["Down increase", fmtMs(downInc)],
-      ["Down throughput", fmtMbps(downBytes, downMs)],
-      ["Down probe-loss / smoothed RTT jitter", fmtPct(lossPercent(down.failures, down.attempts)) + " / " + fmtMs(TestResults.jitterMs(down.samples))],
-      ["Down RPM (SLA)", fmtRpm(rpmFrom(down.rpmSuccess, down.durationMs))],
-      ["Up increase", fmtMs(upInc)],
-      ["Up throughput", fmtMbps(upBytes, upMs)],
-      ["Up probe-loss / smoothed RTT jitter", fmtPct(lossPercent(up.failures, up.attempts)) + " / " + fmtMs(TestResults.jitterMs(up.samples))],
-      ["Up RPM (SLA)", fmtRpm(rpmFrom(up.rpmSuccess, up.durationMs))],
-      ["Both increase", fmtMs(biInc)],
-      ["Both download / upload", fmtMbps(bi.downBytes, biMs) + " / " + fmtMbps(bi.upBytes, biMs)],
-      ["Both probe-loss / smoothed RTT jitter", fmtPct(lossPercent(bi.failures, bi.attempts)) + " / " + fmtMs(TestResults.jitterMs(bi.samples))],
-      ["Both RPM (SLA)", fmtRpm(rpmFrom(bi.rpmSuccess, bi.durationMs))],
-      ["Loaded probe-loss", fmtPct(loadedLoss)],
-      ["Loaded RPM (SLA)", fmtRpm(loadedRpm)],
-      ["Recovery (3× near idle)", Number.isNaN(recUntil) ? "> " + Math.round(recovery.observationMs) + " ms" : fmtMs(recUntil)],
-      ["Recovery p50", fmtMs(percentile([...recovery.samples].sort((a, b) => a - b), 50))],
+    const sections = [
+      { title: "Baseline", rows: [
+        ["Idle p50 / p95", fmtMs(idleP50) + " / " + fmtMs(percentile(idleSorted, 95))],
+      ]},
+      { title: "Calibration", rows: [
+        ["Download", warmup.streams + "× · " + warmup.mbps.toFixed(1) + " Mbps · " + warmup.status],
+        ["Upload", uploadWarmup.streams + "× · " + uploadWarmup.mbps.toFixed(1) + " Mbps · " + uploadWarmup.status],
+      ]},
+      { title: "Download — loaded", rows: [
+        ["Increase", fmtMs(downInc)],
+        ["Throughput", fmtMbps(downBytes, downMs)],
+        ["Probe loss / jitter", fmtPct(lossPercent(down.failures, down.attempts)) + " / " + fmtMs(TestResults.jitterMs(down.samples))],
+        ["RPM", fmtRpm(rpmFrom(down.rpmSuccess, down.durationMs))],
+      ]},
+      { title: "Upload — loaded", rows: [
+        ["Increase", fmtMs(upInc)],
+        ["Throughput", fmtMbps(upBytes, upMs)],
+        ["Probe loss / jitter", fmtPct(lossPercent(up.failures, up.attempts)) + " / " + fmtMs(TestResults.jitterMs(up.samples))],
+        ["RPM", fmtRpm(rpmFrom(up.rpmSuccess, up.durationMs))],
+      ]},
+      { title: "Bidirectional — loaded", rows: [
+        ["Increase", fmtMs(biInc)],
+        ["Throughput down / up", fmtMbps(bi.downBytes, biMs) + " / " + fmtMbps(bi.upBytes, biMs)],
+        ["Probe loss / jitter", fmtPct(lossPercent(bi.failures, bi.attempts)) + " / " + fmtMs(TestResults.jitterMs(bi.samples))],
+        ["RPM", fmtRpm(rpmFrom(bi.rpmSuccess, bi.durationMs))],
+      ]},
+      { title: "Aggregate", rows: [
+        ["Loaded probe loss", fmtPct(loadedLoss)],
+        ["Loaded RPM", fmtRpm(loadedRpm)],
+      ]},
+      { title: "Recovery", rows: [
+        ["Time to 3× near idle", Number.isNaN(recUntil) ? "> " + Math.round(recovery.observationMs) + " ms" : fmtMs(recUntil)],
+        ["Recovery p50", fmtMs(percentile([...recovery.samples].sort((a, b) => a - b), 50))],
+      ]},
     ];
 
-    el.cards.innerHTML = rows
-      .map(
-        ([label, value]) =>
-          `<div class="card"><span class="label">${label}</span><div class="value">${value}</div></div>`
-      )
-      .join("");
+    el.cards.innerHTML = sections.map(sec =>
+      `<div class="cards-section"><div class="cards-section-title">${sec.title}</div><div class="cards-section-grid">` +
+      sec.rows.map(([label, value]) => `<div class="card"><span class="label">${label}</span><div class="value">${value}</div></div>`).join("") +
+      `</div></div>`
+    ).join("");
 
     el.results.hidden = false;
     if (totalPingFailures) warnings.push(totalPingFailures + " HTTP probe failure(s) across the run.");
