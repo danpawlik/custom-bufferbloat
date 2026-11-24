@@ -11,8 +11,9 @@ bench:
 	go test ./internal/handlers -run '^$$' -bench BenchmarkTransfer -benchmem -benchtime=1s -count=1
 
 build:
-	go build -trimpath -buildvcs=false -ldflags="-s -w" -o bufferbloat-test ./cmd/server
-	go build -trimpath -buildvcs=false -ldflags="-s -w" -o bufferbloat-test-cli ./cmd/cli
+	mkdir -p dist
+	go build -trimpath -buildvcs=false -ldflags="-s -w" -o dist/bufferbloat-test ./cmd/server
+	go build -trimpath -buildvcs=false -ldflags="-s -w" -o dist/bufferbloat-test-cli ./cmd/cli
 
 clean:
-	rm -f bufferbloat-test bufferbloat-test-cli
+	rm -f dist/bufferbloat-test dist/bufferbloat-test-cli

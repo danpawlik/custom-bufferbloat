@@ -29,8 +29,8 @@ cd custom-bufferbloat
 go run ./cmd/server -listen :8080
 
 # option B — build then run
-go build -o bufferbloat-test ./cmd/server
-./bufferbloat-test -listen :8080
+go build -o dist/bufferbloat-test ./cmd/server
+./dist/bufferbloat-test -listen :8080
 ```
 
 Then open in a browser:
@@ -113,8 +113,8 @@ go run ./cmd/cli -url http://127.0.0.1:8080
 go run ./cmd/cli -url http://127.0.0.1:8080 -json
 # Three tests, 10-second cooldowns, optional expected usable Mbps:
 go run ./cmd/cli -url http://127.0.0.1:8080 -repeat -expected-download 500 -expected-upload 50 -json
-# or after: go build -o bufferbloat-test-cli ./cmd/cli
-./bufferbloat-test-cli -url http://192.168.1.1:8080 -json
+# or after: go build -o dist/bufferbloat-test-cli ./cmd/cli
+./dist/bufferbloat-test-cli -url http://192.168.1.1:8080 -json
 ```
 
 The CLI talks to the same HTTP API as the browser (~45–65 s, including warm-up / drains / bidir / recovery).
@@ -135,16 +135,16 @@ Starting stream counts are bounded to 1–5 download and 1–3 upload.
 ```bash
 chmod +x scripts/build-openwrt-binary.sh
 ./scripts/build-openwrt-binary.sh arm64   # or armv7 / mips / mipsle / amd64 / riscv64
-# writes openwrt/files/usr/bin/bufferbloat-test
+# writes bufferbloat-test/files/usr/bin/bufferbloat-test
 ```
 
 2. Copy the binary to the router (quick path without a full package build):
 
 ```bash
-scp openwrt/files/usr/bin/bufferbloat-test root@192.168.1.1:/usr/bin/
-scp openwrt/files/etc/init.d/bufferbloat-test root@192.168.1.1:/etc/init.d/
+scp bufferbloat-test/files/usr/bin/bufferbloat-test root@192.168.1.1:/usr/bin/
+scp bufferbloat-test/files/etc/init.d/bufferbloat-test root@192.168.1.1:/etc/init.d/
 # First install only; preserve your existing configuration on upgrades.
-scp openwrt/files/etc/config/bufferbloat-test root@192.168.1.1:/etc/config/
+scp bufferbloat-test/files/etc/config/bufferbloat-test root@192.168.1.1:/etc/config/
 ssh root@192.168.1.1 'chmod +x /usr/bin/bufferbloat-test /etc/init.d/bufferbloat-test'
 ```
 
@@ -172,7 +172,7 @@ build host and the binary matches the target architecture:
 cp feeds.conf.default feeds.conf
 echo 'src-git my https://github.com/danpawlik/custom-bufferbloat.git' >> feeds.conf
 ./scripts/feeds update my && ./scripts/feeds install -a
-make -j1 V=s package/feeds/my/openwrt/compile
+make -j1 V=s package/feeds/my/bufferbloat-test/compile
 # result: bin/packages/<arch>/my/bufferbloat-test-<version>.apk
 ```
 
@@ -180,7 +180,7 @@ The `packages` feed must be available (it provides `lang/golang`). For the `scp`
 above, cross-compile first:
 
 ```bash
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o openwrt/files/usr/bin/bufferbloat-test ./cmd/server
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bufferbloat-test/files/usr/bin/bufferbloat-test ./cmd/server
 ```
 
 Service settings live in `/etc/config/bufferbloat-test`, in the named section `main`:
@@ -242,7 +242,7 @@ Use a new session for each run. These in-memory counters are not saved test resu
 Env overrides: `LISTEN`, `UDP_LISTEN`, `MAX_CONCURRENT`, `DOWNLOAD_STREAMS`, `UPLOAD_STREAMS`.
 
 Optional UDP probes at ~100 kbps (VoWiFi-sized packets) for loss/jitter under load:
-`./bufferbloat-test -listen :8080 -udp-listen :8081` (disabled by default). Browser and CLI can then include UDP probes during the scored phases — CLI via `-udp`, browser via the **Test setup** checkbox. CLI defaults to `<host>:8081`; override with `-udp-addr host:port`. Server logs `test begin/end: session=… remote=192.168.1.5` with the client IP.
+`./dist/bufferbloat-test -listen :8080 -udp-listen :8081` (disabled by default). Browser and CLI can then include UDP probes during the scored phases — CLI via `-udp`, browser via the **Test setup** checkbox. CLI defaults to `<host>:8081`; override with `-udp-addr host:port`. Server logs `test begin/end: session=… remote=192.168.1.5` with the client IP.
 
 Upload uses fewer parallel streams by default: generating/sending bodies is **client-CPU heavy** and can inflate latency samples if the browser is saturated.
 

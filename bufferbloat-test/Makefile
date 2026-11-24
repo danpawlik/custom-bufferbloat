@@ -4,7 +4,7 @@
 #   cp feeds.conf.default feeds.conf
 #   echo 'src-git my https://github.com/danpawlik/custom-bufferbloat.git' >> feeds.conf
 #   ./scripts/feeds update my && ./scripts/feeds install -a
-#   make package/feeds/my/openwrt/compile V=s
+#   make package/feeds/my/bufferbloat-test/compile V=s
 #
 # Builds the Go binary with the OpenWrt golang/host toolchain (from the
 # packages feed), so no Go is needed on the build host and the result
@@ -22,7 +22,7 @@ PKG_LICENSE:=MIT
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
 
-# The Go module lives at the repository root; this Makefile is in openwrt/.
+# The Go module lives at the repository root; this Makefile is in bufferbloat-test/.
 GO_PKG:=github.com/openwrt-builder/custom-bufferbloat
 GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/server
 # Web assets are embedded, so they must be copied into the Go build tree too.
@@ -48,7 +48,7 @@ define Package/bufferbloat-test/conffiles
 /etc/config/bufferbloat-test
 endef
 
-# PKG_BUILD_DIR is this openwrt/ subdirectory's copy; the Go sources are one level up.
+# PKG_BUILD_DIR is this bufferbloat-test/ subdirectory's copy; the Go sources are one level up.
 define Build/Prepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)
 	$(CP) $(CURDIR)/../go.mod $(PKG_BUILD_DIR)/

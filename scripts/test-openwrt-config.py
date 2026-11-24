@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 
 root = Path(__file__).resolve().parents[1]
-init = root / 'openwrt/files/etc/init.d/bufferbloat-test'
+init = root / 'bufferbloat-test/files/etc/init.d/bufferbloat-test'
 harness = r'''
 config_load() { :; }
 config_get() {
@@ -46,7 +46,7 @@ for option in ['max_concurrent', 'download_streams', 'upload_streams', 'lock_ttl
     for value in ['0', '-1', 'abc', '90s', '1 2', '01', '']:
         result = run(**{option: value})
         assert result.returncode != 0 and not result.stdout, (option, value, result)
-makefile = (root / 'openwrt/Makefile').read_text()
+makefile = (root / 'bufferbloat-test/Makefile').read_text()
 assert 'define Package/bufferbloat-test/conffiles\n/etc/config/bufferbloat-test' in makefile
 assert '$(INSTALL_CONF) ./files/etc/config/bufferbloat-test $(1)/etc/config/bufferbloat-test' in makefile
 print('OpenWrt defaults, overrides, validation, quoting, reload trigger and packaging: PASS')

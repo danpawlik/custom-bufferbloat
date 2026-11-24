@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Cross-compile bufferbloat-test into openwrt/files/usr/bin/
+# Cross-compile bufferbloat-test into bufferbloat-test/files/usr/bin/
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="$ROOT/openwrt/files/usr/bin"
+OUT="$ROOT/bufferbloat-test/files/usr/bin"
 mkdir -p "$OUT"
 
 ARCH="${1:-arm64}"
